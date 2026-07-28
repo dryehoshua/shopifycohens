@@ -1,0 +1,284 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+/// Registro operacional de cada entrada o reversión de inventario.
+///
+/// Los movimientos confirmados nunca se eliminan ni se sobreescriben. Una
+/// corrección se guarda como un segundo movimiento con `reversalOfId`.
+model InventoryMovement {
+  id             String   @id @default(cuid())
+  shop           String
+  idempotencyKey String   @unique
+  type           String
+  status         String   @default("PENDING")
+  occurredAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  userId        String?
+  staffMemberId String?
+  locationId    String
+  deviceId      String?
+
+  barcode         String
+  sku             String?
+  productId       String
+  productTitle    String
+  variantId       String
+  variantTitle    String?
+  inventoryItemId String
+
+  quantityDelta    Int
+  reason           String
+  supplier         String?
+  supplierRecordId String?
+  supplierRecord   Supplier? @relation(fields: [supplierRecordId], references: [id], onDelete: SetNull)
+  note             String?
+  beforeAvailable  Int?
+  afterAvailable   Int?
+
+  referenceDocumentUri     String
+  shopifyAdjustmentGroupId String?
+  shopifyAdjustmentAt      DateTime?
+  shopifyAdjustmentReason  String?
+  requestPayload           Json?
+  responsePayload          Json?
+  errorMessage             String?
+
+  reversalOfId String?            @unique
+  reversalOf   InventoryMovement? @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal     InventoryMovement? @relation("MovementReversal")
+
+  @@index([shop, occurredAt])
+  @@index([shop, barcode])
+  @@index([shop, locationId])
+  @@index([supplierRecordId])
+  @@index([status])
+}
+
+/// Catálogo de proveedores disponible en el selector de recepción.
+///
+/// Se alimenta de los proveedores/marcas existentes en los productos de Shopify
+/// y permite registrar proveedores adicionales sin modificar el catálogo.
+model Supplier {
+  id             String   @id @default(cuid())
+  shop           String
+  name           String
+  normalizedName String
+  source         String   @default("MANUAL")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  movements InventoryMovement[]
+
+  @@unique([shop, normalizedName])
+  @@index([shop, active, name])
+}
+
+/// Copia local de los webhooks que pueden explicar cambios o eliminaciones.
+/// Conserva el payload aun si el producto o artículo deja de existir en Shopify.
+model InventoryAuditEvent {
+  id              String    @id @default(cuid())
+  webhookId       String    @unique
+  shop            String
+  topic           String
+  occurredAt      DateTime?
+  capturedAt      DateTime  @default(now())
+  resourceId      String?
+  locationId      String?
+  inventoryItemId String?
+  productId       String?
+  payload         Json
+
+  @@index([shop, capturedAt])
+  @@index([shop, topic])
+  @@index([inventoryItemId])
+  @@index([productId])
+}
+
+/// Ejecución auditable de una importación o sincronización de ventas.
+///
+/// El historial de una ejecución fallida se conserva; una ejecución posterior
+/// actualiza los pedidos de manera idempotente mediante su ID de Shopify.
+model SalesSyncRun {
+  id              String    @id @default(cuid())
+  sourceShop      String
+  source          String    @default("SHOPIFY_ADMIN_API")
+  status          String    @default("RUNNING")
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  costCapturedAt  DateTime  @default(now())
+  ordersSeen      Int       @default(0)
+  ordersImported  Int       @default(0)
+  lineItemsSeen   Int       @default(0)
+  refundsSeen     Int       @default(0)
+  oldestOrderAt   DateTime?
+  newestOrderAt   DateTime?
+  errorMessage    String?
+  metadata        Json?
+
+  orders       SalesOrder[]
+  costSnapshots ProductCostSnapshot[]
+
+  @@index([sourceShop, startedAt])
+  @@index([status])
+}
+
+/// Copia local de un pedido de la tienda productiva.
+///
+/// Los importes se guardan en centavos para evitar errores de redondeo.
+model SalesOrder {
+  id                      String    @id @default(cuid())
+  sourceShop              String
+  shopifyOrderId          String
+  name                    String
+  createdAt               DateTime
+  processedAt             DateTime?
+  shopifyUpdatedAt        DateTime
+  importedAt              DateTime  @default(now())
+  cancelledAt             DateTime?
+  currencyCode            String
+  financialStatus         String?
+  fulfillmentStatus       String?
+  sourceName              String?
+  test                    Boolean   @default(false)
+  includedInProfit        Boolean   @default(false)
+  originalSalesCents      Int       @default(0)
+  discountCents           Int       @default(0)
+  refundedProductCents    Int       @default(0)
+  refundedPaymentCents    Int       @default(0)
+  netSalesCents           Int       @default(0)
+  taxCents                Int       @default(0)
+  currentTotalCents       Int       @default(0)
+  originalItemQuantity    Int       @default(0)
+  netItemQuantity         Int       @default(0)
+  calculableCostCents     Int       @default(0)
+  calculableProfitCents   Int       @default(0)
+  coveredNetSalesCents    Int       @default(0)
+  missingCostSalesCents   Int       @default(0)
+  profitComplete          Boolean   @default(false)
+  rawPayload              Json?
+
+  lastSyncRunId String?
+  lastSyncRun   SalesSyncRun? @relation(fields: [lastSyncRunId], references: [id], onDelete: SetNull)
+
+  lineItems SalesLineItem[]
+  refunds   SalesRefund[]
+
+  @@unique([sourceShop, shopifyOrderId])
+  @@index([sourceShop, createdAt])
+  @@index([sourceShop, includedInProfit, createdAt])
+  @@index([sourceShop, name])
+  @@index([lastSyncRunId])
+}
+
+/// Partida de venta con venta neta y costo vigente capturado.
+model SalesLineItem {
+  id                          String   @id @default(cuid())
+  orderId                     String
+  order                       SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineItemId           String
+  shopifyProductId            String?
+  shopifyVariantId            String?
+  shopifyInventoryItemId      String?
+  productHandle               String?
+  productTitle                String
+  variantTitle                String?
+  sku                         String?
+  originalQuantity            Int
+  netQuantity                 Int
+  refundedQuantity            Int      @default(0)
+  originalUnitPriceCents      Int
+  originalSalesCents          Int
+  discountCents               Int      @default(0)
+  refundedSalesCents          Int      @default(0)
+  netSalesCents               Int
+  currentUnitCostCents        Int?
+  calculatedCostCents         Int?
+  calculatedProfitCents       Int?
+  marginBasisPoints           Int?
+  costSource                  String?
+  costCapturedAt              DateTime?
+  missingCostReason           String?
+  importedAt                  DateTime @default(now())
+  rawPayload                  Json?
+
+  @@unique([orderId, shopifyLineItemId])
+  @@index([shopifyVariantId])
+  @@index([sku])
+  @@index([productTitle])
+}
+
+/// Reembolso financiero y sus cantidades de producto asociadas.
+model SalesRefund {
+  id                 String   @id @default(cuid())
+  orderId            String
+  order              SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyRefundId    String
+  createdAt          DateTime
+  updatedAt          DateTime
+  successfulAmountCents Int   @default(0)
+  productSubtotalCents  Int   @default(0)
+  productQuantity       Int   @default(0)
+  transactionStatus     String?
+  rawPayload            Json?
+
+  @@unique([orderId, shopifyRefundId])
+  @@index([createdAt])
+}
+
+/// Historial del valor "Costo por artículo" utilizado en cada sincronización.
+model ProductCostSnapshot {
+  id                     String   @id @default(cuid())
+  sourceShop             String
+  shopifyProductId       String?
+  shopifyVariantId       String
+  shopifyInventoryItemId String?
+  productHandle          String?
+  productTitle           String
+  variantTitle           String?
+  sku                    String?
+  unitCostCents          Int?
+  currencyCode           String
+  source                 String   @default("SHOPIFY_INVENTORY_ITEM_UNIT_COST")
+  capturedAt             DateTime @default(now())
+  syncRunId              String
+  syncRun                SalesSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+
+  @@unique([syncRunId, shopifyVariantId])
+  @@index([sourceShop, shopifyVariantId, capturedAt])
+  @@index([sourceShop, sku, capturedAt])
+}

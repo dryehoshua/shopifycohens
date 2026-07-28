@@ -1,0 +1,47 @@
+.DS_Store
+tmp/
+**/node_modules/
+**/build/
+**/dist/
+
+# Credenciales, sesiones y configuración local.
+**/.env
+**/.env.*
+!**/.env.example
+**/.shopify/
+apps/cohen-inventory-entry/shopify.app.toml
+**/.cursor/
+**/.gemini/
+**/.mcp.json
+
+# Bases de datos y archivos temporales.
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+**/*.log
+
+# Información operativa y exportaciones privadas.
+data/
+output/
+outputs/
+.artifact-work/
+*.csv
+*.xlsx
+*.xls
+*.pdf
+*.zip
+*.ndjson
+
+# Informes internos con cifras reales. La versión pública está en docs/.
+DIAGNOSTICO_INICIAL.md
+IMPLEMENTACION_OBJETIVO_1_EXISTENCIAS.md
+IMPLEMENTACION_OBJETIVO_2_UTILIDAD.md
+MIGRACION_INVENTARIO_2026-07-27.md
+PLAN_IMPLEMENTACION.md
+PREGUNTAS_AL_DUENO.md
+REPORTE_PUESTA_EN_MARCHA_FISICA_OBJETIVO_1.md
+knowledge-base/ESTADO_ACTUAL_2026-07-27.md
+
+# Herramientas locales de generación y auditoría.
+scripts/
+tools/

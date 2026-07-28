@@ -1,0 +1,166 @@
+# Cohens Operations · aplicación Shopify
+
+Aplicación Shopify modular con dos apartados activos. **Inventario y entradas**
+registra mercancía desde PC o Shopify POS mediante código de barras.
+**Analíticos de utilidad** sincroniza ventas y calcula utilidad bruta estimada
+con el “Costo por artículo” vigente.
+
+## Objetivo 2 · Analíticos de utilidad
+
+La ruta embebida `/app/profit` contiene filtros de hoy, 7 días, 30 días y todo
+el historial, además de:
+
+- venta neta después de descuentos y unidades reembolsadas;
+- costo calculable por cantidad neta y costo vigente;
+- utilidad bruta y margen por producto;
+- ordenamiento de toda la base por producto, SKU, unidades, venta neta, costo,
+  utilidad o margen, en ambas direcciones;
+- cobertura de costo y lista accionable de productos sin costo;
+- artículos reembolsados y transacciones financieras exitosas;
+- pedidos recientes y serie diaria;
+- exclusión explícita de pruebas, cancelaciones y pagos pendientes.
+
+La importación completa se ejecuta con `pnpm sales:sync`. Las actualizaciones de
+pedidos y reembolsos se reciben en `/webhooks/sales-sync`. El cálculo conserva
+pedidos, partidas, reembolsos, ejecuciones y capturas de costo en la base local.
+El reembolso no se resta dos veces: Shopify entrega la venta de línea sin
+cantidades reembolsadas o retiradas y la app calcula el costo con la cantidad
+neta restante.
+
+Esta cifra es utilidad bruta estimada, no utilidad neta. El costo es el vigente
+al momento de sincronizar, porque Shopify no conserva un costo histórico
+completo para todas las ventas anteriores.
+
+## Flujo desde PC
+
+1. El empleado abre **Registrar entrada PC** dentro del administrador de Shopify.
+2. Selecciona la ubicación y escanea una pieza con una pistola configurada como
+   teclado/HID y terminador Enter.
+3. La app busca una coincidencia exacta de código y muestra la existencia actual.
+4. La app preselecciona el proveedor asociado al producto; el empleado captura
+   cantidad y nota, o registra un proveedor nuevo si todavía no existe.
+5. La app muestra el saldo resultante.
+6. Al confirmar, el backend aplica un ajuste incremental idempotente en Shopify.
+7. La app guarda el folio, usuario, origen de escritorio y saldos anterior/nuevo.
+8. Una corrección crea un movimiento inverso enlazado; nunca borra el original.
+
+Ruta embebida:
+
+```text
+/app/receive
+```
+
+## Flujo desde Shopify POS
+
+El mismo backend también está conectado al mosaico **Registrar entrada** de
+Shopify POS. En móvil o tableta se puede escanear con pistola compatible, escáner
+integrado o cámara. PC y POS usan las mismas reglas de inventario, idempotencia,
+bitácora y corrección.
+
+## Componentes
+
+- `app/routes/app.profit.tsx`: panel de utilidad bruta.
+- `app/sales-sync.server.ts`: actualización idempotente por webhook.
+- `scripts/sync-sales-from-shopify.mjs`: importación histórica completa.
+- `app/routes/webhooks.sales-sync.tsx`: pedidos y reembolsos nuevos.
+- `app/routes/app.receive.tsx`: pantalla de recepción desde PC.
+- `app/inventory-operations.server.ts`: operaciones compartidas por PC y POS.
+- `app/supplier.server.ts`: sincronización y alta del catálogo de proveedores.
+- `extensions/registrar-entrada-pos`: mosaico y modal Preact para Shopify POS
+  API `2026-07`.
+- `app/routes/api.pos.inventory.lookup.ts`: consulta exacta por código.
+- `app/routes/api.pos.inventory.receive.ts`: entrada idempotente.
+- `app/routes/api.pos.inventory.reverse.$movementId.ts`: corrección compensatoria.
+- `app/routes/api.pos.inventory.movements.ts`: movimientos recientes del POS.
+- `app/routes/webhooks.inventory-audit.tsx`: evidencia de cambios y eliminaciones.
+- `app/routes/app._index.tsx`: panel administrativo y bitácora.
+- `app/inventory.server.ts`: reglas de dominio y GraphQL Admin API.
+- `prisma/schema.prisma`: sesiones, movimientos y eventos de auditoría.
+
+## Controles de integridad
+
+- código de barras obligatorio y coincidencia exacta;
+- rechazo de códigos duplicados;
+- seguimiento de inventario obligatorio;
+- ubicación activa del POS;
+- cantidad entera positiva;
+- clave única por operación;
+- directiva Shopify `@idempotent`;
+- `changeFromQuantity` para detectar concurrencia;
+- movimientos terminales conservados;
+- una sola reversión por entrada;
+- motivo obligatorio para corregir;
+- proveedor obligatorio tomado de un selector persistente;
+- fecha y hora UTC en base de datos y presentación en
+  `America/Mexico_City`;
+- payload de webhook único.
+
+## Permisos Shopify
+
+```text
+read_products
+write_products
+read_inventory
+write_inventory
+read_locations
+read_orders
+read_all_orders
+```
+
+El usuario que opera POS también necesita permiso para aplicar cambios de
+inventario.
+
+`write_products` y `read_locations` se usan para preparar y verificar la tienda
+de desarrollo. La instalación productiva debe reducir los permisos al conjunto
+que realmente requiera la versión que se publique.
+
+## Migración del catálogo a la tienda de desarrollo
+
+El importador usa la tienda de desarrollo indicada en `SHOPIFY_DEV_STORE`,
+conserva un punto de reanudación por producto y no duplica los handles ya
+terminados.
+
+```bash
+pnpm catalog:dry-run
+pnpm catalog:pilot
+pnpm catalog:import
+pnpm catalog:verify
+```
+
+La fuente local es
+`data/backups/shopify-2026-07-27/cohens-products-master.csv`. El resultado y el
+punto de reanudación se guardan en el mismo directorio.
+
+## Desarrollo local
+
+La base local es SQLite y sólo se usa para desarrollo. Las pruebas de escritura
+se hacen exclusivamente en la tienda indicada por `SHOPIFY_DEV_STORE`; no se
+automatizan contra la tienda productiva.
+
+```bash
+pnpm install
+pnpm prisma migrate dev
+pnpm typecheck
+pnpm build
+pnpm shopify app build
+```
+
+## Publicación
+
+La tienda de Cohen es productiva y Shopify no acepta `shopify app dev` como
+servidor temporal para ella. Antes de instalar:
+
+1. publicar el backend en una URL HTTPS estable;
+2. usar una base de datos de producción con respaldos;
+3. configurar `SHOPIFY_APP_URL`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET` y
+   `SCOPES`;
+4. cambiar `application_url` y `redirect_urls` en `shopify.app.toml`;
+5. aplicar migraciones;
+6. liberar la versión de la extensión;
+7. instalar la app en la tienda;
+8. agregar el mosaico a Shopify POS;
+9. realizar una prueba física controlada con dos unidades.
+
+SQLite no debe utilizarse como base definitiva de una instalación con varias
+cajas. La publicación productiva debe usar PostgreSQL administrado o una
+alternativa transaccional equivalente.

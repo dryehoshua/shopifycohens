@@ -1,0 +1,38 @@
+# Copia este archivo como shopify.app.toml y sustituye los valores de ejemplo.
+
+client_id = "REPLACE_WITH_SHOPIFY_CLIENT_ID"
+name = "Cohens Operations"
+application_url = "https://app.example.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,read_inventory,read_locations,read_orders,read_all_orders"
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/inventory-audit"
+  topics = [ "inventory_items/delete", "inventory_levels/update", "products/delete" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/sales-sync"
+  topics = [ "orders/create", "orders/updated", "refunds/create" ]
+
+[auth]
+redirect_urls = [
+  "https://app.example.com/auth/callback",
+  "https://app.example.com/auth/shopify/callback",
+  "https://app.example.com/api/auth/callback"
+]
+
+[build]
+automatically_update_urls_on_dev = true

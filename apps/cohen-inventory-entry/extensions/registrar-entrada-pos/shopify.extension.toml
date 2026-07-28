@@ -1,0 +1,19 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+# Change the merchant-facing name of the extension in locales/en.default.json
+name = "t:name"
+uid = "230fe791-c326-2160-9f87-801b42b6e5858a6afa72"
+handle = "registrar-entrada-pos"
+description = "Registra entradas por código de barras con auditoría y reversión"
+
+# module: file that contains your extension’s source code
+# target: location where your extension appears in POS
+[[extensions.targeting]]
+module = "./src/Tile.jsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.jsx"
+target = "pos.home.modal.render"
