@@ -1,6 +1,7 @@
 {
   "name": "cohens-operations",
   "private": true,
+  "packageManager": "pnpm@11.9.0",
   "scripts": {
     "build": "react-router build",
     "dev": "shopify app dev",
