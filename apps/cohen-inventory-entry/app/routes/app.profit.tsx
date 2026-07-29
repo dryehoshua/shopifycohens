@@ -55,12 +55,14 @@ function parseMexicoDate(value: string | null, endOfDay = false) {
 }
 
 function profitHref({
+  baseUrl = "/app/profit",
   period,
   dateFrom,
   dateTo,
   sort,
   direction,
 }: {
+  baseUrl?: string;
   period: string;
   dateFrom?: string | null;
   dateTo?: string | null;
@@ -76,7 +78,7 @@ function profitHref({
   }
   params.set("sort", sort);
   params.set("dir", direction);
-  return `/app/profit?${params.toString()}`;
+  return `${baseUrl}?${params.toString()}`;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -463,10 +465,18 @@ export default function ProfitAnalytics() {
               <a
                 key={value}
                 href={profitHref({
+                  baseUrl: data.analyticsActionUrl,
                   period: value,
                   sort: data.productSort,
                   direction: data.productDirection,
                 })}
+                target={
+                  data.analyticsActionUrl.startsWith(
+                    "https://admin.shopify.com/",
+                  )
+                    ? "_top"
+                    : undefined
+                }
                 style={{
                   padding: "8px 13px",
                   borderRadius: "999px",
@@ -520,10 +530,18 @@ export default function ProfitAnalytics() {
             {data.dateFrom || data.dateTo ? (
               <a
                 href={profitHref({
+                  baseUrl: data.analyticsActionUrl,
                   period: "30d",
                   sort: data.productSort,
                   direction: data.productDirection,
                 })}
+                target={
+                  data.analyticsActionUrl.startsWith(
+                    "https://admin.shopify.com/",
+                  )
+                    ? "_top"
+                    : undefined
+                }
                 style={{
                   minHeight: "38px",
                   padding: "8px 5px",
@@ -720,6 +738,7 @@ export default function ProfitAnalytics() {
                       <SortHeader
                         label={heading}
                         field={field}
+                        baseUrl={data.analyticsActionUrl}
                         period={data.period}
                         dateFrom={data.dateFrom}
                         dateTo={data.dateTo}
@@ -919,6 +938,7 @@ function DateField({
 function SortHeader({
   label,
   field,
+  baseUrl,
   period,
   dateFrom,
   dateTo,
@@ -927,6 +947,7 @@ function SortHeader({
 }: {
   label: string;
   field: string;
+  baseUrl: string;
   period: string;
   dateFrom: string | null;
   dateTo: string | null;
@@ -944,12 +965,18 @@ function SortHeader({
           <a
             key={direction}
             href={profitHref({
+              baseUrl,
               period,
               dateFrom,
               dateTo,
               sort: field,
               direction,
             })}
+            target={
+              baseUrl.startsWith("https://admin.shopify.com/")
+                ? "_top"
+                : undefined
+            }
             aria-label={`Ordenar ${label} ${
               ascending ? "de menor a mayor" : "de mayor a menor"
             }`}
