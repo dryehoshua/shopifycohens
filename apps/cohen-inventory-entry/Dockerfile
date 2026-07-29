@@ -1,8 +1,8 @@
-FROM node:20-alpine
+FROM node:22-alpine
 RUN apk add --no-cache openssl
 RUN npm install --global pnpm@11.9.0
 
-EXPOSE 3000
+EXPOSE 8080
 
 WORKDIR /app
 

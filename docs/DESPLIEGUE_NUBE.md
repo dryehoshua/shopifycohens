@@ -2,8 +2,10 @@
 
 ## Decisión inmediata
 
-La primera versión productiva se desplegará en Railway Pro como un servicio
-Docker con dominio HTTPS permanente y reinicio automático.
+La primera versión productiva está desplegada en Railway como un servicio
+Docker con dominio HTTPS permanente y reinicio automático. El despliegue
+inicial usa el crédito Trial; antes de que venza se debe activar como mínimo
+Hobby para conservar el servicio y el volumen.
 
 Para reducir el riesgo del cambio, la base SQLite actual se conservará
 inicialmente en un volumen persistente. El servicio tendrá una sola réplica
@@ -22,16 +24,17 @@ Estos archivos están excluidos tanto de Git como de la imagen Docker.
 
 ## Configuración de Railway
 
-- Proyecto: `cohens-operations-production`.
-- Plan: Pro.
-- Repositorio: `dryehoshua/shopifycohens`.
+- Proyecto: `Cohens Operations`.
+- Plan actual: Trial; siguiente mínimo operativo: Hobby.
+- Repositorio previsto: `dryehoshua/shopifycohens`.
 - Rama: `main`.
 - Directorio raíz: `/apps/cohen-inventory-entry`.
 - Constructor: Dockerfile.
-- Dominio: generado por Railway durante el primer despliegue.
+- Dominio: `https://cohens-operations-production.up.railway.app`.
 - Endpoint de salud: `/health`.
 - Política de reinicio: siempre.
-- Volumen persistente: montado en `/app/prisma`.
+- Volumen persistente: montado en `/data`.
+- Base de datos: `DATABASE_URL=file:/data/dev.sqlite`.
 - Réplicas durante la etapa SQLite: una.
 
 ## Variables secretas requeridas
@@ -44,7 +47,6 @@ Los valores se cargarán directamente en Railway; no se copiarán al repositorio
 - `SCOPES`
 - `COHENS_SOURCE_SHOP`
 - `COHENS_SOURCE_SHOP_NAME`
-- `COHENS_SOURCE_ADMIN_TOKEN`
 - `SHOPIFY_ADMIN_APP_URL`
 - `NODE_ENV=production`
 
@@ -52,15 +54,16 @@ Railway proporciona `PORT` automáticamente.
 
 ## Migración y cambio de servicio
 
-1. Crear el proyecto y el volumen en Railway.
-2. Desplegar la aplicación sin dirigir todavía Shopify al nuevo dominio.
-3. Transferir la base SQLite por un canal seguro al volumen.
-4. Comprobar `/health`, inventario, proveedores, movimientos y analíticos.
-5. Configurar el dominio definitivo en Shopify.
-6. Publicar la nueva configuración de la aplicación.
-7. Probar el flujo de entrada y los cálculos desde la tienda productiva.
-8. Mantener el servidor local disponible únicamente durante la validación.
-9. Apagar el túnel local después de confirmar el servicio en la nube.
+1. Proyecto y volumen creados en Railway.
+2. Aplicación desplegada antes de dirigir Shopify al nuevo dominio.
+3. Base SQLite transferida por SSH al volumen y validada por checksum.
+4. `/health`, integridad, inventario, proveedores, movimientos y analíticos
+   comprobados.
+5. Dominio definitivo configurado en Shopify.
+6. Versión `railway-production-2026-07-28` publicada.
+7. Flujo de entrada y cálculos probados desde la tienda productiva sin registrar
+   movimientos ficticios.
+8. Túnel local retirado del flujo productivo.
 
 ## Verificación posterior
 
@@ -71,9 +74,14 @@ Railway proporciona `PORT` automáticamente.
   sincronizados.
 - Los secretos no aparecen en el repositorio ni en los registros públicos.
 - Railway muestra el servicio saludable y permite reiniciarlo automáticamente.
+- El dominio público devuelve `{"status":"ok"}`.
 
 ## Segunda etapa
 
 Migrar la base de datos a PostgreSQL administrado, configurar respaldos
 periódicos, agregar monitoreo continuo externo y separar la sincronización de
 ventas en un proceso programado.
+
+Antes de vencer el Trial se debe activar Hobby. Pro queda reservado para una
+etapa posterior si el negocio requiere equipos, mayor historial de registros o
+un objetivo de disponibilidad superior.
