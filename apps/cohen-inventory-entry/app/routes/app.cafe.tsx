@@ -49,10 +49,44 @@ async function graphql<T>(admin: GraphqlAdmin, query: string, variables: Record<
 }
 
 async function existingByHandle(admin: GraphqlAdmin, handle: string) {
-  const data = await graphql<{ productByHandle: { id: string; title: string; status: string } | null }>(admin, `#graphql
-    query CafeProduct($handle: String!) { productByHandle(handle: $handle) { id title status } }
+  const data = await graphql<{ productByHandle: { id: string; title: string; status: string; media: { nodes: Array<{ id: string }> } } | null }>(admin, `#graphql
+    query CafeProduct($handle: String!) { productByHandle(handle: $handle) { id title status media(first: 1) { nodes { id } } } }
   `, { handle });
   return data.productByHandle;
+}
+
+async function uploadMenuImages(admin: GraphqlAdmin, appOrigin: string) {
+  const uploaded: string[] = [];
+  const skipped: string[] = [];
+  const missing: string[] = [];
+  for (const item of MENU) {
+    const product = await existingByHandle(admin, item.handle);
+    if (!product) {
+      missing.push(item.title);
+      continue;
+    }
+    if (product.media.nodes.length > 0) {
+      skipped.push(item.title);
+      continue;
+    }
+    const originalSource = new URL(`/cafe-images/${item.handle}.png`, appOrigin).toString();
+    const result = await graphql<{ productUpdate: { product: { id: string } | null; userErrors: Array<{ field?: string[]; message: string }> } }>(admin, `#graphql
+      mutation AddCafeProductImage($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+        productUpdate(product: $product, media: $media) {
+          product { id }
+          userErrors { field message }
+        }
+      }
+    `, {
+      product: { id: product.id },
+      media: [{ mediaContentType: "IMAGE", originalSource, alt: `${item.title} de Cohen's Cafe` }],
+    });
+    if (result.productUpdate.userErrors.length || !result.productUpdate.product) {
+      throw new Error(result.productUpdate.userErrors.map((error) => error.message).join("; ") || `No se pudo cargar la imagen de ${item.title}.`);
+    }
+    uploaded.push(item.title);
+  }
+  return { uploaded, skipped, missing };
 }
 
 async function createMenuProduct(admin: GraphqlAdmin, definition: MenuDefinition) {
@@ -239,6 +273,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+  if (intent === "images") {
+    try {
+      const appOrigin = process.env.SHOPIFY_APP_URL?.trim() || new URL(request.url).origin;
+      return { ok: true as const, kind: "images" as const, ...(await uploadMenuImages(admin, appOrigin)) };
+    } catch (error) {
+      return { ok: false as const, kind: "images" as const, error: error instanceof Error ? error.message : "Error desconocido." };
+    }
+  }
   if (intent === "restrict") {
     try {
       return { ok: true as const, kind: "restrict" as const, ...(await restrictCafeInventory(admin)) };
@@ -305,8 +347,19 @@ export default function CafeSetup() {
           {result && !result.ok && result.kind === "restrict" ? <s-banner tone="critical" heading="No se pudo restringir el catálogo">{result.error}</s-banner> : null}
         </s-stack>
       </s-section>
+      <s-section heading="Imágenes del menú">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>Carga las fotografías generadas para los 13 productos. Los productos que ya tengan imagen se conservan sin duplicados.</s-paragraph>
+          <Form method="post">
+            <input type="hidden" name="intent" value="images" />
+            <s-button type="submit" variant="primary" disabled={pending}>{pending ? "Cargando…" : "Cargar imágenes generadas"}</s-button>
+          </Form>
+          {result?.ok && result.kind === "images" ? <s-banner tone="success" heading="Imágenes procesadas">Cargadas: {result.uploaded.length}. Ya tenían imagen: {result.skipped.length}. Productos aún no creados: {result.missing.length}.</s-banner> : null}
+          {result && !result.ok && result.kind === "images" ? <s-banner tone="critical" heading="La carga quedó incompleta">{result.error}</s-banner> : null}
+        </s-stack>
+      </s-section>
       <s-section heading="Productos">
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th style={{ textAlign: "left", padding: 8 }}>Producto</th><th style={{ textAlign: "left", padding: 8 }}>Estado</th><th style={{ textAlign: "left", padding: 8 }}>Shopify</th></tr></thead><tbody>{data.items.map((item) => <tr key={item.handle}><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.title}</td><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.status === "ACTIVE" ? "Activo" : "Borrador: falta precio"}</td><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.existing ? "Existe" : "Pendiente"}</td></tr>)}</tbody></table></div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th style={{ textAlign: "left", padding: 8 }}>Producto</th><th style={{ textAlign: "left", padding: 8 }}>Estado</th><th style={{ textAlign: "left", padding: 8 }}>Shopify</th><th style={{ textAlign: "left", padding: 8 }}>Imagen</th></tr></thead><tbody>{data.items.map((item) => <tr key={item.handle}><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.title}</td><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.status === "ACTIVE" ? "Activo" : "Borrador: falta precio"}</td><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.existing ? "Existe" : "Pendiente"}</td><td style={{ padding: 8, borderTop: "1px solid #ddd" }}>{item.existing?.media.nodes.length ? "Cargada" : "Pendiente"}</td></tr>)}</tbody></table></div>
       </s-section>
     </s-page>
   );
