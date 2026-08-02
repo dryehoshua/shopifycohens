@@ -23,6 +23,7 @@ export default function App() {
         </a>
         <a href="/app/receive">Inventario · Registrar entrada</a>
         <a href="/app/profit">Analíticos · Utilidad</a>
+        <a href="/app/cafe">Cohen's Cafe</a>
       </ui-nav-menu>
       <Outlet />
     </AppProvider>
