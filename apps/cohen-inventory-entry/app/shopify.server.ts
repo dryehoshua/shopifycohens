@@ -16,6 +16,7 @@ const requiredScopes = [
   "write_inventory",
   "read_locations",
   "read_orders",
+  "write_orders",
   "read_all_orders",
 ];
 

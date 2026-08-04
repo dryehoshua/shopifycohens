@@ -1,0 +1,11 @@
+{
+  "name": "Cohen's Cafe POS",
+  "short_name": "Cafe POS",
+  "start_url": "/cafe-pos",
+  "display": "standalone",
+  "background_color": "#f5f0e8",
+  "theme_color": "#321f18",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "any", "type": "image/x-icon" }
+  ]
+}

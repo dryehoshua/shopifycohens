@@ -6,14 +6,17 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
   // eslint-disable-next-line no-undef
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  return {
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    cafeDedicated: process.env.CAFE_POS_ENABLED === "true" && session.shop === process.env.CAFE_SHOP_DOMAIN?.trim().toLowerCase(),
+  };
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, cafeDedicated } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider embedded apiKey={apiKey}>
@@ -23,7 +26,8 @@ export default function App() {
         </a>
         <a href="/app/receive">Inventario · Registrar entrada</a>
         <a href="/app/profit">Analíticos · Utilidad</a>
-        <a href="/app/cafe">Cohen's Cafe</a>
+        <a href="/app/cafe">Cohen&apos;s Cafe</a>
+        {cafeDedicated ? <a href="/app/cafe-pos">Cafetería · POS web</a> : null}
       </ui-nav-menu>
       <Outlet />
     </AppProvider>

@@ -1,8 +1,13 @@
 # Operación de Cohen's Cafe en Shopify POS
 
-## Decisión de arquitectura
+## Estado transitorio en la tienda principal
 
-Cohen's Cafe se opera dentro de la tienda principal de Cohen's Kosher & Deli. Se identifica mediante:
+Esta configuración se conserva únicamente durante la prueba y el corte hacia la
+tienda independiente descrita en `OPERACION_COHENS_CAFE_INDEPENDIENTE.md`. No se
+elimina porque mantiene el historial previo. Después de validar la nueva tienda,
+los productos se despublicarán y la ubicación se desactivará sin borrar pedidos.
+
+Dentro de la tienda principal se identifica mediante:
 
 - ubicación POS: `Cohen's Cafe`;
 - proveedor: `Cohen's Cafe`;
@@ -11,7 +16,8 @@ Cohen's Cafe se opera dentro de la tienda principal de Cohen's Kosher & Deli. Se
 - etiqueta operativa: `cohens-cafe`;
 - SKUs consecutivos con prefijo `CAF-`.
 
-No se crea una segunda tienda porque fragmentaría clientes, pedidos, reembolsos, inventario, permisos, suscripción y analíticos. La separación por ubicación y tipo de producto permite medir la unidad de negocio dentro de los mismos reportes.
+La nueva tienda sí mantendrá clientes, pedidos, inventario, permisos, suscripción
+y analíticos independientes, según la decisión operativa actual.
 
 ## Configuración aplicada
 

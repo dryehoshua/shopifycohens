@@ -18,6 +18,12 @@ sin credenciales, sesiones, datos de clientes, catálogo real ni cifras comercia
    - cobertura de costos faltantes;
    - filtros rápidos y rango personalizado de fechas;
    - ordenamiento tipo Excel desde cada columna.
+3. **Cohen's Cafe independiente**
+   - catálogo e imágenes reutilizables en una tienda Shopify aislada;
+   - POS web con personal por PIN y cierre de caja;
+   - ventas idempotentes con efectivo o terminal externa;
+   - impresión ESC/POS directa desde Chrome Android a una POS58D;
+   - inventario híbrido para productos con unidades limitadas.
 
 ## Estructura
 
@@ -26,6 +32,8 @@ sin credenciales, sesiones, datos de clientes, catálogo real ni cifras comercia
 - `docs/ANALISIS_Y_PLAN.md`: objetivos, diagnóstico funcional y etapas.
 - `docs/MODULO_1_INVENTARIO.md`: diseño y operación de inventario.
 - `docs/MODULO_2_UTILIDAD.md`: fórmula, reembolsos y panel analítico.
+- `docs/OPERACION_COHENS_CAFE_INDEPENDIENTE.md`: despliegue y operación de la
+  tienda y POS exclusivas de cafetería.
 - `knowledge-base/`: procedimientos y capacidades nativas de Shopify.
 
 ## Principios
@@ -52,6 +60,6 @@ configuración local antes de iniciar Shopify CLI.
 
 ## Estado
 
-Los dos módulos descritos están implementados. Antes de una operación permanente
+Los módulos descritos están implementados. Antes de una operación permanente
 se requiere alojamiento HTTPS estable, una base de datos administrada, respaldos y
 la configuración de permisos mínimos por ambiente.

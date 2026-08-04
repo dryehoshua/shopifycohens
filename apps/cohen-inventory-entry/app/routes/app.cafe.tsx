@@ -8,6 +8,7 @@ type VariantDefinition = {
   sku: string;
   price: string;
   cost?: string;
+  tracked?: boolean;
 };
 
 type MenuDefinition = {
@@ -26,12 +27,12 @@ const MENU: MenuDefinition[] = [
   { handle: "capuchino", title: "Capuchino", descriptionHtml: "<p>Precio y costo pendientes de confirmación.</p>", status: "DRAFT", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "pendiente-precio"], variants: [{ name: "Default Title", sku: "CAF-003", price: "0.00" }] },
   { handle: "frappe", title: "Frappé", descriptionHtml: "<p>Bebida fría tipo frappé preparada al momento.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "bebidas-frias"], variants: [{ name: "Default Title", sku: "CAF-004", price: "120.00", cost: "41.05" }] },
   { handle: "molletes", title: "Molletes", descriptionHtml: "<p>Molletes preparados al momento con aproximadamente 40 g de queso.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "alimentos-preparados"], variants: [{ name: "Default Title", sku: "CAF-005", price: "150.00", cost: "34.95" }] },
-  { handle: "tamales-oaxaquenos", title: "Tamales oaxaqueños", descriptionHtml: "<p>Tamal oaxaqueño preparado para servicio en Cohen's Cafe.</p>", status: "ACTIVE", optionName: "Sabor", tags: ["cohens-cafe", "cafeteria", "pos-menu", "alimentos-preparados"], variants: [{ name: "Mole", sku: "CAF-006-MOL", price: "60.00", cost: "26.00" }, { name: "Verde", sku: "CAF-006-VER", price: "60.00", cost: "26.00" }] },
-  { handle: "tamal-hoja-maiz", title: "Tamal de hoja de maíz", descriptionHtml: "<p>Precio y costo pendientes de confirmación.</p>", status: "DRAFT", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "pendiente-precio"], variants: [{ name: "Default Title", sku: "CAF-007", price: "0.00" }] },
+  { handle: "tamales-oaxaquenos", title: "Tamales oaxaqueños", descriptionHtml: "<p>Tamal oaxaqueño preparado para servicio en Cohen's Cafe.</p>", status: "ACTIVE", optionName: "Sabor", tags: ["cohens-cafe", "cafeteria", "pos-menu", "alimentos-preparados", "inventario-controlado"], variants: [{ name: "Mole", sku: "CAF-006-MOL", price: "60.00", cost: "26.00", tracked: true }, { name: "Verde", sku: "CAF-006-VER", price: "60.00", cost: "26.00", tracked: true }] },
+  { handle: "tamal-hoja-maiz", title: "Tamal de hoja de maíz", descriptionHtml: "<p>Precio y costo pendientes de confirmación.</p>", status: "DRAFT", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "pendiente-precio", "inventario-controlado"], variants: [{ name: "Default Title", sku: "CAF-007", price: "0.00", tracked: true }] },
   { handle: "jocoque-aceituna-roscas", title: "Jocoque con aceituna y roscas", descriptionHtml: "<p>Porción de jocoque con aceituna y roscas.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "alimentos-preparados"], variants: [{ name: "Default Title", sku: "CAF-008", price: "100.00", cost: "43.88" }] },
-  { handle: "pan-dulce", title: "Pan dulce", descriptionHtml: "<p>Pan dulce para servicio en Cohen's Cafe.</p>", status: "ACTIVE", optionName: "Presentación", tags: ["cohens-cafe", "cafeteria", "pos-menu", "panaderia"], variants: [{ name: "Opción A", sku: "CAF-009-A", price: "50.00", cost: "25.60" }, { name: "Variedad por identificar", sku: "CAF-009-B", price: "55.00", cost: "36.75" }] },
+  { handle: "pan-dulce", title: "Pan dulce", descriptionHtml: "<p>Pan dulce para servicio en Cohen's Cafe.</p>", status: "ACTIVE", optionName: "Presentación", tags: ["cohens-cafe", "cafeteria", "pos-menu", "panaderia", "inventario-controlado"], variants: [{ name: "Opción A", sku: "CAF-009-A", price: "50.00", cost: "25.60", tracked: true }, { name: "Variedad por identificar", sku: "CAF-009-B", price: "55.00", cost: "36.75", tracked: true }] },
   { handle: "bagel-salmon", title: "Bagel con salmón", descriptionHtml: "<p>Bagel con salmón preparado al momento.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "alimentos-preparados"], variants: [{ name: "Default Title", sku: "CAF-010", price: "240.00", cost: "87.85" }] },
-  { handle: "rebanada-pastel", title: "Rebanada de pastel Bakery", descriptionHtml: "<p>Rebanada de pastel para servicio en Cohen's Cafe.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "reposteria"], variants: [{ name: "Default Title", sku: "CAF-011", price: "120.00", cost: "47.00" }] },
+  { handle: "rebanada-pastel", title: "Rebanada de pastel Bakery", descriptionHtml: "<p>Rebanada de pastel para servicio en Cohen's Cafe.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "reposteria", "inventario-controlado"], variants: [{ name: "Default Title", sku: "CAF-011", price: "120.00", cost: "47.00", tracked: true }] },
   { handle: "sincronizada", title: "Sincronizada", descriptionHtml: "<p>Sincronizada preparada al momento.</p>", status: "ACTIVE", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "alimentos-preparados"], variants: [{ name: "Default Title", sku: "CAF-012", price: "55.00", cost: "20.85" }] },
   { handle: "quesadilla", title: "Quesadilla", descriptionHtml: "<p>Precio y costo pendientes de confirmación.</p>", status: "DRAFT", optionName: "Title", tags: ["cohens-cafe", "cafeteria", "pos-menu", "pendiente-precio"], variants: [{ name: "Default Title", sku: "CAF-013", price: "0.00" }] },
 ];
@@ -104,7 +105,8 @@ async function createMenuProduct(admin: GraphqlAdmin, definition: MenuDefinition
       sku: variant.sku,
       price: variant.price,
       taxable: true,
-      inventoryItem: { tracked: false, ...(variant.cost ? { cost: variant.cost } : {}) },
+      inventoryPolicy: variant.tracked ? "DENY" : "CONTINUE",
+      inventoryItem: { tracked: variant.tracked ?? false, ...(variant.cost ? { cost: variant.cost } : {}) },
     })),
   };
   const created = await graphql<{ productSet: { product: { id: string } | null; userErrors: Array<{ field?: string[]; message: string }> } }>(admin, `#graphql
@@ -137,25 +139,29 @@ async function ensureCollection(admin: GraphqlAdmin) {
   return { id: result.collectionCreate.collection.id, created: true };
 }
 
-async function pointOfSalePublication(admin: GraphqlAdmin) {
+async function cafePublications(admin: GraphqlAdmin, dedicated: boolean) {
   const data = await graphql<{ publications: { nodes: Array<{ id: string; name: string; catalog: { title: string } | null }> } }>(admin, `#graphql
     query CafePublications {
       publications(first: 50) { nodes { id name catalog { title } } }
     }
   `);
-  const publication = data.publications.nodes.find((item) =>
+  const pos = data.publications.nodes.find((item) =>
     /point of sale|shopify pos|punto de venta/i.test(`${item.name} ${item.catalog?.title ?? ""}`),
   );
-  if (!publication) throw new Error("No se encontró la publicación de Point of Sale.");
-  return publication;
+  const online = data.publications.nodes.find((item) =>
+    /online store|tienda online|tienda en línea/i.test(`${item.name} ${item.catalog?.title ?? ""}`),
+  );
+  if (!pos) throw new Error("No se encontró la publicación de Point of Sale.");
+  if (dedicated && !online) throw new Error("No se encontró la publicación de Tienda online.");
+  return dedicated && online ? [pos, online] : [pos];
 }
 
-async function publishToPointOfSale(admin: GraphqlAdmin, id: string, publicationId: string) {
+async function publishCafeResource(admin: GraphqlAdmin, id: string, publicationIds: string[]) {
   const result = await graphql<{ publishablePublish: { userErrors: Array<{ message: string }> } }>(admin, `#graphql
     mutation PublishCafeResource($id: ID!, $input: [PublicationInput!]!) {
       publishablePublish(id: $id, input: $input) { userErrors { message } }
     }
-  `, { id, input: [{ publicationId }] });
+  `, { id, input: publicationIds.map((publicationId) => ({ publicationId })) });
   if (result.publishablePublish.userErrors.length) {
     throw new Error(result.publishablePublish.userErrors.map((error) => error.message).join("; "));
   }
@@ -264,13 +270,14 @@ async function restrictCafeInventory(admin: GraphqlAdmin) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const states = await Promise.all(MENU.map(async (item) => ({ ...item, existing: await existingByHandle(admin, item.handle) })));
-  return { items: states, activeCount: MENU.filter((item) => item.status === "ACTIVE").length, draftCount: MENU.filter((item) => item.status === "DRAFT").length };
+  return { items: states, activeCount: MENU.filter((item) => item.status === "ACTIVE").length, draftCount: MENU.filter((item) => item.status === "DRAFT").length, dedicated: session.shop === process.env.CAFE_SHOP_DOMAIN?.trim().toLowerCase() };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const dedicated = session.shop === process.env.CAFE_SHOP_DOMAIN?.trim().toLowerCase();
   const formData = await request.formData();
   const intent = formData.get("intent");
   if (intent === "images") {
@@ -305,11 +312,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (item.status === "ACTIVE") activeProductIds.push(id);
     }
     const collection = await ensureCollection(admin);
-    const publication = await pointOfSalePublication(admin);
+    const publications = await cafePublications(admin, dedicated);
     for (const id of [...activeProductIds, collection.id]) {
-      await publishToPointOfSale(admin, id, publication.id);
+      await publishCafeResource(admin, id, publications.map((publication) => publication.id));
     }
-    return { ok: true as const, kind: "setup" as const, created, skipped, collectionCreated: collection.created, publishedCount: activeProductIds.length, publicationName: publication.name };
+    return { ok: true as const, kind: "setup" as const, created, skipped, collectionCreated: collection.created, publishedCount: activeProductIds.length, publicationName: publications.map((publication) => publication.name).join(" y ") };
   } catch (error) {
     return { ok: false as const, kind: "setup" as const, created, skipped, error: error instanceof Error ? error.message : "Error desconocido." };
   }
@@ -324,8 +331,8 @@ export default function CafeSetup() {
     <s-page heading="Cohen's Cafe">
       <s-section heading="Configuración del menú POS">
         <s-stack direction="block" gap="base">
-          <s-banner tone="info" heading="Una unidad de negocio dentro de la tienda principal">
-            Los productos usan proveedor Cohen's Cafe, tipo Cafetería, SKUs CAF y una colección automática. Los artículos sin precio confirmado permanecen en borrador.
+          <s-banner tone="info" heading={data.dedicated ? "Tienda independiente de cafetería" : "Unidad de negocio dentro de la tienda principal"}>
+            {data.dedicated ? "Este catálogo pertenece únicamente a la tienda Cohen's Cafe y se publica también en la tienda online." : "Los productos usan proveedor Cohen's Cafe, tipo Cafetería, SKUs CAF y una colección automática."} Los artículos sin precio confirmado permanecen en borrador.
           </s-banner>
           <s-paragraph>{data.activeCount} productos activos y {data.draftCount} borradores protegidos.</s-paragraph>
           <Form method="post">
@@ -338,7 +345,7 @@ export default function CafeSetup() {
       </s-section>
       <s-section heading="Catálogo exclusivo de la tablet">
         <s-stack direction="block" gap="base">
-          <s-paragraph>Activa en la ubicación Cohen's Cafe únicamente los artículos enviados para cafetería. Plaza Victoria no se modifica.</s-paragraph>
+          <s-paragraph>Activa en la ubicación Cohen&apos;s Cafe únicamente los artículos enviados para cafetería. Plaza Victoria no se modifica.</s-paragraph>
           <Form method="post">
             <input type="hidden" name="intent" value="restrict" />
             <s-button type="submit" variant="primary" disabled={pending}>{pending ? "Aplicando…" : "Restringir a productos de cafetería"}</s-button>

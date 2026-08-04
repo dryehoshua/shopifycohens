@@ -1,8 +1,9 @@
-# Copia este archivo como shopify.app.toml y sustituye los valores de ejemplo.
+# Aplicación Shopify separada para la tienda productiva Cohen's Cafe.
+# Crear una nueva aplicación en Shopify Dev Dashboard y completar client_id.
 
-client_id = "REPLACE_WITH_SHOPIFY_CLIENT_ID"
-name = "Cohens Operations"
-application_url = "https://app.example.com"
+client_id = "REPLACE_WITH_CAFE_SHOPIFY_CLIENT_ID"
+name = "Cohens Cafe Operations"
+application_url = "https://cohens-cafe-operations.example.com"
 embedded = true
 
 [access_scopes]
@@ -29,10 +30,10 @@ api_version = "2026-07"
 
 [auth]
 redirect_urls = [
-  "https://app.example.com/auth/callback",
-  "https://app.example.com/auth/shopify/callback",
-  "https://app.example.com/api/auth/callback"
+  "https://cohens-cafe-operations.example.com/auth/callback",
+  "https://cohens-cafe-operations.example.com/auth/shopify/callback",
+  "https://cohens-cafe-operations.example.com/api/auth/callback"
 ]
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false

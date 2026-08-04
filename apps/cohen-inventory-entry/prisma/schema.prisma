@@ -282,3 +282,99 @@ model ProductCostSnapshot {
   @@index([sourceShop, shopifyVariantId, capturedAt])
   @@index([sourceShop, sku, capturedAt])
 }
+
+/// Empleado autorizado para operar la caja web de Cohen's Cafe.
+/// El PIN nunca se guarda en texto; se conserva únicamente scrypt + sal.
+model CafeStaff {
+  id             String   @id @default(cuid())
+  shop           String
+  name           String
+  normalizedName String
+  pinSalt        String
+  pinHash        String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions CafePosSession[]
+  shifts   CafeRegisterShift[]
+  sales    CafeSale[]
+
+  @@unique([shop, normalizedName])
+  @@index([shop, active, name])
+}
+
+/// Sesión de la POS pública. El navegador recibe el token original en una
+/// cookie HttpOnly; la base conserva solamente su hash SHA-256.
+model CafePosSession {
+  id         String    @id @default(cuid())
+  shop       String
+  tokenHash  String    @unique
+  staffId    String
+  staff      CafeStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([shop, expiresAt])
+  @@index([staffId, revokedAt])
+}
+
+/// Turno de caja para conciliación de efectivo y terminal externa.
+model CafeRegisterShift {
+  id                    String    @id @default(cuid())
+  shop                  String
+  staffId               String
+  staff                 CafeStaff @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  status                String    @default("OPEN")
+  openedAt              DateTime  @default(now())
+  openingCashCents      Int       @default(0)
+  closedAt              DateTime?
+  closingCashCents      Int?
+  expectedCashCents     Int?
+  cashVarianceCents     Int?
+  terminalCountedCents  Int?
+  terminalExpectedCents Int?
+  terminalVarianceCents Int?
+  notes                 String?
+
+  sales CafeSale[]
+
+  @@index([shop, status, openedAt])
+  @@index([staffId, openedAt])
+}
+
+/// Intento de venta de la POS. Se crea antes de llamar a Shopify para poder
+/// reintentar y reconciliar sin duplicar pedidos después de una falla de red.
+model CafeSale {
+  id               String            @id @default(cuid())
+  shop             String
+  idempotencyKey   String
+  status           String            @default("PENDING")
+  staffId          String
+  staff            CafeStaff         @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  shiftId          String
+  shift            CafeRegisterShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  paymentMethod    String
+  externalReference String?
+  subtotalCents    Int
+  taxCents         Int               @default(0)
+  totalCents       Int
+  currencyCode     String            @default("MXN")
+  items            Json
+  shopifyOrderId   String?
+  shopifyOrderName String?
+  errorMessage     String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  syncedAt         DateTime?
+  lastPrintedAt    DateTime?
+  printCount       Int               @default(0)
+
+  @@unique([shop, idempotencyKey])
+  @@index([shop, createdAt])
+  @@index([shop, status, createdAt])
+  @@index([shiftId, paymentMethod])
+  @@index([shopifyOrderId])
+}
