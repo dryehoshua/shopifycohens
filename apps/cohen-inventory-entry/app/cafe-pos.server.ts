@@ -84,7 +84,17 @@ export function clearSessionCookie() {
 
 export function assertSameOrigin(request: Request) {
   const origin = request.headers.get("Origin");
-  if (origin && origin !== new URL(request.url).origin) {
+  if (!origin) return;
+
+  const allowedOrigins = new Set([new URL(request.url).origin]);
+  const configuredUrl = process.env.SHOPIFY_APP_URL;
+  if (configuredUrl) allowedOrigins.add(new URL(configuredUrl).origin);
+
+  const forwardedHost = request.headers.get("X-Forwarded-Host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("X-Forwarded-Proto")?.split(",")[0]?.trim();
+  if (forwardedHost && forwardedProto) allowedOrigins.add(`${forwardedProto}://${forwardedHost}`);
+
+  if (!allowedOrigins.has(origin)) {
     throw new CafePosError("La solicitud no proviene de la POS autorizada.", 403, "ORIGIN_REJECTED");
   }
 }
