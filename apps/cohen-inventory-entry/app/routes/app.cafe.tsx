@@ -123,6 +123,56 @@ async function createMenuProduct(admin: GraphqlAdmin, definition: MenuDefinition
   return created.productSet.product.id;
 }
 
+async function syncExistingMenuProduct(admin: GraphqlAdmin, productId: string, definition: MenuDefinition) {
+  const data = await graphql<{
+    product: { variants: { nodes: Array<{ id: string; sku: string | null; inventoryItem: { id: string } }> } } | null;
+  }>(admin, `#graphql
+    query ExistingCafeVariants($id: ID!) {
+      product(id: $id) {
+        variants(first: 100) { nodes { id sku inventoryItem { id } } }
+      }
+    }
+  `, { id: productId });
+  if (!data.product) throw new Error(`No se pudo consultar ${definition.title}.`);
+
+  const definitionsBySku = new Map(definition.variants.map((variant) => [variant.sku, variant]));
+  const variantInputs: Array<{ id: string; inventoryPolicy: "DENY" | "CONTINUE" }> = [];
+  for (const variant of data.product.variants.nodes) {
+    const expected = variant.sku ? definitionsBySku.get(variant.sku) : undefined;
+    if (!expected) continue;
+    const inventoryResult = await graphql<{
+      inventoryItemUpdate: { inventoryItem: { id: string } | null; userErrors: Array<{ message: string }> };
+    }>(admin, `#graphql
+      mutation SyncCafeInventoryItem($id: ID!, $input: InventoryItemInput!) {
+        inventoryItemUpdate(id: $id, input: $input) {
+          inventoryItem { id }
+          userErrors { message }
+        }
+      }
+    `, {
+      id: variant.inventoryItem.id,
+      input: { tracked: expected.tracked ?? false, ...(expected.cost ? { cost: expected.cost } : {}) },
+    });
+    if (inventoryResult.inventoryItemUpdate.userErrors.length || !inventoryResult.inventoryItemUpdate.inventoryItem) {
+      throw new Error(inventoryResult.inventoryItemUpdate.userErrors.map((error) => error.message).join("; ") || `No se pudo actualizar el inventario de ${definition.title}.`);
+    }
+    variantInputs.push({ id: variant.id, inventoryPolicy: expected.tracked ? "DENY" : "CONTINUE" });
+  }
+
+  const variantResult = await graphql<{
+    productVariantsBulkUpdate: { userErrors: Array<{ message: string }> };
+  }>(admin, `#graphql
+    mutation SyncCafeVariantPolicies($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        userErrors { message }
+      }
+    }
+  `, { productId, variants: variantInputs });
+  if (variantResult.productVariantsBulkUpdate.userErrors.length) {
+    throw new Error(variantResult.productVariantsBulkUpdate.userErrors.map((error) => error.message).join("; "));
+  }
+}
+
 async function ensureCollection(admin: GraphqlAdmin) {
   const existing = await graphql<{ collectionByHandle: { id: string } | null }>(admin, `#graphql
     query CafeCollection { collectionByHandle(handle: "cohens-cafe") { id } }
@@ -303,6 +353,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     for (const item of MENU) {
       const existing = await existingByHandle(admin, item.handle);
       if (existing) {
+        await syncExistingMenuProduct(admin, existing.id, item);
         skipped.push(item.title);
         if (item.status === "ACTIVE") activeProductIds.push(existing.id);
         continue;
