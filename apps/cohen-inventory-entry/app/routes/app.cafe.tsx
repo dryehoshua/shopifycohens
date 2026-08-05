@@ -221,7 +221,8 @@ async function cafeLocation(admin: GraphqlAdmin) {
   const data = await graphql<{ locations: { nodes: Array<{ id: string; name: string }> } }>(admin, `#graphql
     query CafeLocations { locations(first: 50) { nodes { id name } } }
   `);
-  const location = data.locations.nodes.find((item) => item.name === CAFE_LOCATION_NAME);
+  const location = data.locations.nodes.find((item) => item.name === CAFE_LOCATION_NAME)
+    ?? (data.locations.nodes.length === 1 ? data.locations.nodes[0] : undefined);
   if (!location) throw new Error(`No se encontró la ubicación ${CAFE_LOCATION_NAME}.`);
   return location;
 }
