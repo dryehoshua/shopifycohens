@@ -43,11 +43,39 @@ export default function CafePosAdmin() {
   const pending = useNavigation().state !== "idle";
   return (
     <s-page heading="POS web · Cohen's Cafe">
-      <s-section heading="Acceso de la tablet">
+      <s-section heading="Abrir punto de venta">
         <s-stack direction="block" gap="base">
-          <s-paragraph>Abre esta dirección en Chrome Android y agrégala a la pantalla principal:</s-paragraph>
-          <s-paragraph><a href={posUrl} target="_blank" rel="noreferrer">{posUrl}</a></s-paragraph>
-          <s-banner tone="info" heading="Acceso protegido">Cada empleado entra con su PIN individual. La impresora se autoriza desde la propia POS.</s-banner>
+          <s-banner tone="info" heading="Esta pantalla solo configura el acceso">
+            Las ventas no se hacen en este panel. Abre la caja con el botón de abajo para seleccionar productos, cobrar y emitir el ticket.
+          </s-banner>
+          <a
+            href={posUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "18px 24px",
+              borderRadius: 12,
+              background: "#26744c",
+              color: "white",
+              fontSize: 18,
+              fontWeight: 800,
+              textAlign: "center",
+              textDecoration: "none",
+            }}
+          >
+            Abrir punto de venta
+          </a>
+          <s-paragraph>
+            Funciona en Chrome desde tablet o computadora. La caja permite armar la cuenta, cobrar en efectivo o terminal, registrar la venta en Shopify y mandar el ticket automáticamente a la impresora autorizada.
+          </s-paragraph>
+          <s-paragraph>
+            Dirección directa para guardar en la pantalla principal: <a href={posUrl} target="_blank" rel="noreferrer">{posUrl}</a>
+          </s-paragraph>
+          <s-banner tone="warning" heading="Primera conexión de la impresora">
+            Conecta la POS58D por USB, abre la caja en Chrome y toca “Conectar impresora” una sola vez para autorizarla. Después, cada venta terminada intenta imprimir el ticket automáticamente.
+          </s-banner>
         </s-stack>
       </s-section>
       <s-section heading="Crear o restablecer PIN">
