@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   assertSameOrigin,
+  cancelCafeSale,
   cafePosJsonError,
   createCafeSale,
   recentCafeSales,
@@ -21,6 +22,12 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     assertSameOrigin(request);
     const body = (await request.json()) as Record<string, unknown>;
+    if (body.cancelSaleId) {
+      return Response.json({
+        ok: true,
+        sale: await cancelCafeSale(request, String(body.cancelSaleId), body.managerPin),
+      });
+    }
     if (body.retrySaleId) {
       return Response.json({ ok: true, sale: await retryCafeSale(request, String(body.retrySaleId)) });
     }

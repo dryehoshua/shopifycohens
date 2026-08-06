@@ -15,6 +15,7 @@ import {
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
 const loginAttempts = new Map<string, { failures: number; blockedUntil: number }>();
+const managerAttempts = new Map<string, { failures: number; blockedUntil: number }>();
 
 export class CafePosError extends Error {
   status: number;
@@ -99,27 +100,59 @@ export function assertSameOrigin(request: Request) {
   }
 }
 
-export async function createCafeStaff(shop: string, name: string, pin: string) {
+function managerConfig() {
+  const name = process.env.CAFE_MANAGER_NAME?.trim().replace(/\s+/g, " ");
+  const pin = process.env.CAFE_MANAGER_PIN?.trim();
+  if (!name || name.length < 2 || name.length > 80 || !pin || !/^\d{4,8}$/.test(pin)) {
+    throw new CafePosError("El acceso del gerente no está configurado.", 503, "MANAGER_NOT_CONFIGURED");
+  }
+  return { name, pin };
+}
+
+function managerPinMatches(value: string) {
+  const expected = managerConfig().pin;
+  if (!/^\d{4,8}$/.test(value) || value.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+}
+
+export async function createCafeStaff(shop: string, name: string, pin: string, role = "CASHIER") {
   assertDedicatedCafeAdminShop(shop);
   const trimmedName = name.trim().replace(/\s+/g, " ");
   if (trimmedName.length < 2 || trimmedName.length > 80) {
     throw new CafePosError("El nombre debe contener entre 2 y 80 caracteres.");
   }
   if (!/^\d{4,8}$/.test(pin)) throw new CafePosError("El PIN debe contener entre 4 y 8 dígitos.");
+  if (role !== "CASHIER" && role !== "MANAGER") throw new CafePosError("El rol del empleado no es válido.");
+  if (role !== "MANAGER" && managerPinMatches(pin)) {
+    throw new CafePosError("Ese PIN está reservado para el gerente.", 409, "PIN_RESERVED");
+  }
+  const normalizedName = normalizeCafeName(trimmedName);
+  const existingStaff = await db.cafeStaff.findMany({ where: { shop } });
+  const duplicatePin = existingStaff.find((candidate) => {
+    if (candidate.normalizedName === normalizedName) return false;
+    const expected = Buffer.from(candidate.pinHash, "hex");
+    const received = pinDigest(pin, candidate.pinSalt);
+    return expected.length === received.length && timingSafeEqual(expected, received);
+  });
+  if (duplicatePin) {
+    throw new CafePosError("Ese PIN ya pertenece a otro usuario.", 409, "PIN_ALREADY_USED");
+  }
   const salt = randomBytes(16).toString("hex");
   return db.cafeStaff.upsert({
-    where: { shop_normalizedName: { shop, normalizedName: normalizeCafeName(trimmedName) } },
+    where: { shop_normalizedName: { shop, normalizedName } },
     create: {
       shop,
       name: trimmedName,
-      normalizedName: normalizeCafeName(trimmedName),
+      normalizedName,
       pinSalt: salt,
       pinHash: pinDigest(pin, salt).toString("hex"),
+      role,
     },
     update: {
       name: trimmedName,
       pinSalt: salt,
       pinHash: pinDigest(pin, salt).toString("hex"),
+      role,
       active: true,
     },
   });
@@ -127,13 +160,20 @@ export async function createCafeStaff(shop: string, name: string, pin: string) {
 
 export async function listCafeStaff(shop: string) {
   assertDedicatedCafeAdminShop(shop);
-  return db.cafeStaff.findMany({ where: { shop }, orderBy: [{ active: "desc" }, { name: "asc" }] });
+  return db.cafeStaff.findMany({
+    where: { shop },
+    select: { id: true, name: true, role: true, active: true, createdAt: true, updatedAt: true },
+    orderBy: [{ active: "desc" }, { name: "asc" }],
+  });
 }
 
 export async function setCafeStaffActive(shop: string, staffId: string, active: boolean) {
   assertDedicatedCafeAdminShop(shop);
   const staff = await db.cafeStaff.findFirst({ where: { id: staffId, shop } });
   if (!staff) throw new CafePosError("No se encontró el empleado.", 404);
+  if (staff.role === "MANAGER" && !active) {
+    throw new CafePosError("El acceso maestro del gerente no se puede desactivar.", 409, "MANAGER_REQUIRED");
+  }
   await db.$transaction([
     db.cafeStaff.update({ where: { id: staff.id }, data: { active } }),
     ...(!active
@@ -147,6 +187,35 @@ function requestKey(request: Request) {
   return `${configuredShop()}:${forwarded || "unknown"}`;
 }
 
+function recordManagerAttempt(request: Request, success: boolean) {
+  const key = `${requestKey(request)}:manager`;
+  const attempt = managerAttempts.get(key);
+  if (attempt && attempt.blockedUntil > Date.now()) {
+    throw new CafePosError("Demasiados intentos de PIN maestro. Espera cinco minutos.", 429, "MANAGER_PIN_BLOCKED");
+  }
+  if (success) {
+    managerAttempts.delete(key);
+    return;
+  }
+  const failures = (attempt?.failures ?? 0) + 1;
+  managerAttempts.set(key, {
+    failures: failures >= 5 ? 0 : failures,
+    blockedUntil: failures >= 5 ? Date.now() + 5 * 60_000 : 0,
+  });
+  throw new CafePosError("PIN maestro incorrecto.", 403, "MANAGER_PIN_INVALID");
+}
+
+export async function requireCafeManager(request: Request, pin?: unknown) {
+  const session = await currentCafeSession(request);
+  if (session!.staff.role === "MANAGER") {
+    return { session: session!, managerName: session!.staff.name };
+  }
+  const received = String(pin ?? "");
+  const matches = managerPinMatches(received);
+  recordManagerAttempt(request, matches);
+  return { session: session!, managerName: managerConfig().name };
+}
+
 export async function loginCafeStaff(request: Request, pin: string) {
   const shop = assertCafePosEnabled();
   if (!/^\d{4,8}$/.test(pin)) throw new CafePosError("PIN incorrecto.", 401, "PIN_INVALID");
@@ -154,6 +223,10 @@ export async function loginCafeStaff(request: Request, pin: string) {
   const attempt = loginAttempts.get(key);
   if (attempt && attempt.blockedUntil > Date.now()) {
     throw new CafePosError("Demasiados intentos. Espera cinco minutos.", 429, "PIN_BLOCKED");
+  }
+  if (managerPinMatches(pin)) {
+    const manager = managerConfig();
+    await createCafeStaff(shop, manager.name, manager.pin, "MANAGER");
   }
   const staffMembers = await db.cafeStaff.findMany({ where: { shop, active: true } });
   const staff = staffMembers.find((candidate) => {
@@ -175,7 +248,7 @@ export async function loginCafeStaff(request: Request, pin: string) {
   await db.cafePosSession.create({
     data: { shop, staffId: staff.id, tokenHash: tokenDigest(token), expiresAt },
   });
-  return { token, staff: { id: staff.id, name: staff.name }, expiresAt };
+  return { token, staff: { id: staff.id, name: staff.name, role: staff.role }, expiresAt };
 }
 
 export async function currentCafeSession(request: Request, required = true) {
@@ -585,6 +658,69 @@ export async function recentCafeSales(request: Request, limit = 30) {
     include: { staff: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: Math.max(1, Math.min(limit, 100)),
+  });
+}
+
+export async function cancelCafeSale(request: Request, saleId: string, managerPin?: unknown) {
+  const authorization = await requireCafeManager(request, managerPin);
+  const sale = await db.cafeSale.findFirst({
+    where: { id: saleId, shop: authorization.session.shop },
+    include: { staff: { select: { name: true } } },
+  });
+  if (!sale) throw new CafePosError("No se encontró la venta.", 404, "SALE_NOT_FOUND");
+  if (sale.status === "CANCELLED") return sale;
+  if (sale.status !== "SYNCED" || !sale.shopifyOrderId) {
+    throw new CafePosError("Solo se pueden cancelar pedidos ya sincronizados con Shopify.", 409, "SALE_NOT_CANCELLABLE");
+  }
+
+  const { admin } = await adminContext();
+  const result = await graphql<{
+    orderCancel: {
+      job: { id: string; done: boolean } | null;
+      orderCancelUserErrors: Array<{ field?: string[]; message: string; code?: string }>;
+    };
+  }>(admin, `#graphql
+    mutation CafePosOrderCancel(
+      $orderId: ID!
+      $refundMethod: OrderCancelRefundMethodInput!
+      $restock: Boolean!
+      $reason: OrderCancelReason!
+      $staffNote: String
+    ) {
+      orderCancel(
+        orderId: $orderId
+        refundMethod: $refundMethod
+        restock: $restock
+        reason: $reason
+        staffNote: $staffNote
+      ) {
+        job { id done }
+        orderCancelUserErrors { field message code }
+      }
+    }
+  `, {
+    orderId: sale.shopifyOrderId,
+    refundMethod: { originalPaymentMethodsRefund: true },
+    restock: true,
+    reason: "STAFF",
+    staffNote: `Cancelado desde POS web por ${authorization.managerName}. Venta local ${sale.id}.`,
+  });
+  if (result.orderCancel.orderCancelUserErrors.length) {
+    throw new CafePosError(
+      result.orderCancel.orderCancelUserErrors.map((error) => error.message).join("; "),
+      409,
+      "ORDER_CANCEL_REJECTED",
+    );
+  }
+  return db.cafeSale.update({
+    where: { id: sale.id },
+    data: {
+      status: "CANCELLED",
+      cancelledAt: new Date(),
+      cancelledByName: authorization.managerName,
+      errorMessage: null,
+    },
+    include: { staff: { select: { name: true } } },
   });
 }
 

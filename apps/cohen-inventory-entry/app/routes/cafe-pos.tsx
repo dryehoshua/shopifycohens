@@ -29,7 +29,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return {
       enabled: true as const,
       shop,
-      staff: session ? { id: session.staff.id, name: session.staff.name } : null,
+      staff: session ? { id: session.staff.id, name: session.staff.name, role: session.staff.role } : null,
       shift: session ? await currentCafeShift(shop) : null,
     };
   } catch (error) {
@@ -84,6 +84,14 @@ type Sale = {
   staff: { name: string };
   errorMessage?: string | null;
   printCount?: number;
+  cancelledAt?: string | null;
+  cancelledByName?: string | null;
+};
+type StaffMember = {
+  id: string;
+  name: string;
+  role: string;
+  active: boolean;
 };
 
 type UsbEndpoint = { direction: string; endpointNumber: number };
@@ -196,12 +204,15 @@ export default function CafePos() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: string; text: string } | null>(null);
-  const [drawer, setDrawer] = useState<"orders" | "shift" | null>(null);
+  const [drawer, setDrawer] = useState<"orders" | "shift" | "staff" | null>(null);
   const [openingCash, setOpeningCash] = useState("0");
   const [closingCash, setClosingCash] = useState("");
   const [terminalCounted, setTerminalCounted] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
   const [printerName, setPrinterName] = useState("");
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [staffName, setStaffName] = useState("");
+  const [staffPin, setStaffPin] = useState("");
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
 
@@ -321,6 +332,67 @@ export default function CafePos() {
     } finally { setBusy(false); }
   }
 
+  async function cancelSale(sale: Sale) {
+    if (!window.confirm(`¿Cancelar ${sale.shopifyOrderName || sale.id.slice(-8)}? Esta acción no se puede deshacer y el inventario se repondrá.`)) return;
+    const managerPin = initial.staff?.role === "MANAGER"
+      ? undefined
+      : window.prompt("Ingresa el PIN maestro del gerente para cancelar el pedido:");
+    if (initial.staff?.role !== "MANAGER" && managerPin === null) return;
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ sale: Sale }>("/api/cafe-pos/orders", {
+        method: "POST",
+        body: JSON.stringify({ cancelSaleId: sale.id, managerPin }),
+      });
+      setSales((current) => current.map((item) => item.id === result.sale.id ? result.sale : item));
+      setMessage({
+        tone: "success",
+        text: `Pedido ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} cancelado. Devuelve el efectivo o revierte el cobro en la terminal física si corresponde.`,
+      });
+      await loadData();
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo cancelar el pedido." });
+    } finally { setBusy(false); }
+  }
+
+  async function openStaff() {
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ staff: StaffMember[] }>("/api/cafe-pos/staff");
+      setStaffMembers(result.staff); setDrawer("staff");
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo abrir Empleados." });
+    } finally { setBusy(false); }
+  }
+
+  async function saveStaff(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ staff: StaffMember[] }>("/api/cafe-pos/staff", {
+        method: "POST",
+        body: JSON.stringify({ intent: "create", name: staffName, pin: staffPin }),
+      });
+      setStaffMembers(result.staff); setStaffName(""); setStaffPin("");
+      setMessage({ tone: "success", text: "Empleado guardado. Ya puede entrar con su PIN." });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo guardar el empleado." });
+    } finally { setBusy(false); }
+  }
+
+  async function toggleStaff(member: StaffMember) {
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ staff: StaffMember[] }>("/api/cafe-pos/staff", {
+        method: "POST",
+        body: JSON.stringify({ intent: "toggle", staffId: member.id, active: !member.active }),
+      });
+      setStaffMembers(result.staff);
+      setMessage({ tone: "success", text: `Acceso de ${member.name} actualizado.` });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar el acceso." });
+    } finally { setBusy(false); }
+  }
+
   async function charge(paymentMethod: "CASH" | "EXTERNAL_CARD") {
     if (!shift || !cart.length) return;
     if (paymentMethod === "EXTERNAL_CARD" && !window.confirm("Confirma que la terminal externa aprobó el cobro antes de registrar la venta.")) return;
@@ -373,11 +445,12 @@ export default function CafePos() {
 
   return <div className="cafe-shell">
     <header className="cafe-topbar">
-      <div className="cafe-brand"><div className="cafe-brand-mark">C</div><div><h1>Cohen&apos;s Cafe</h1><small>{initial.staff.name} · {shift ? "Turno abierto" : "Sin turno"}</small></div></div>
+      <div className="cafe-brand"><div className="cafe-brand-mark">C</div><div><h1>Cohen&apos;s Cafe</h1><small>Bienvenido, {initial.staff.name}{initial.staff.role === "MANAGER" ? " · Gerente" : ""} · {shift ? "Turno abierto" : "Sin turno"}</small></div></div>
       <div className="top-actions">
         <button className="btn btn-dark" onClick={connectPrinter}>🖨️ <span className="label">{printerName || "Conectar impresora"}</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("orders")}>🧾 <span className="label">Pedidos</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("shift")}>💵 <span className="label">Turno</span></button>
+        {initial.staff.role === "MANAGER" ? <button className="btn btn-dark" disabled={busy} onClick={openStaff}>👥 <span className="label">Empleados</span></button> : null}
         <button className="btn btn-dark" onClick={logout}>Salir</button>
       </div>
     </header>
@@ -408,8 +481,32 @@ export default function CafePos() {
     </div>
     {drawer ? <><button type="button" className="drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="drawer">
       <button className="btn btn-secondary" onClick={() => setDrawer(null)}>Cerrar</button>
-      {drawer === "orders" ? <><h2>Pedidos recientes</h2>{sales.map((sale) => <div className="sale-card" key={sale.id}><div className="sale-card-head"><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><br /><small>{new Date(sale.createdAt).toLocaleString("es-MX")} · {sale.staff.name}</small></div><strong>{formatMoney(sale.totalCents)}</strong></div><span className={`badge ${sale.status !== "SYNCED" ? "pending" : ""}`}>{sale.status === "SYNCED" ? "Sincronizado" : "Pendiente"}</span>{sale.errorMessage ? <div className="status status-warning">{sale.errorMessage}</div> : null}<div className="sale-card-actions"><button className="btn btn-secondary" onClick={() => printSale(sale)}>Reimprimir</button>{sale.status !== "SYNCED" ? <button className="btn btn-primary" disabled={busy} onClick={() => retrySale(sale)}>Reintentar sincronización</button> : null}</div></div>)}</> : null}
+      {drawer === "orders" ? <><h2>Pedidos recientes</h2>{sales.map((sale) => <div className="sale-card" key={sale.id}>
+        <div className="sale-card-head"><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><br /><small>{new Date(sale.createdAt).toLocaleString("es-MX")} · {sale.staff.name}</small></div><strong>{formatMoney(sale.totalCents)}</strong></div>
+        <span className={`badge ${sale.status !== "SYNCED" && sale.status !== "CANCELLED" ? "pending" : ""}`}>{sale.status === "SYNCED" ? "Sincronizado" : sale.status === "CANCELLED" ? "Cancelado" : "Pendiente"}</span>
+        {sale.status === "CANCELLED" && sale.cancelledByName ? <div className="status status-info">Cancelado por {sale.cancelledByName}.</div> : null}
+        {sale.errorMessage ? <div className="status status-warning">{sale.errorMessage}</div> : null}
+        <div className="sale-card-actions">
+          <button className="btn btn-secondary" onClick={() => printSale(sale)}>Reimprimir</button>
+          {sale.status === "SYNCED" ? <button className="btn btn-danger" disabled={busy} onClick={() => cancelSale(sale)}>Cancelar pedido</button> : null}
+          {sale.status !== "SYNCED" && sale.status !== "CANCELLED" ? <button className="btn btn-primary" disabled={busy} onClick={() => retrySale(sale)}>Reintentar sincronización</button> : null}
+        </div>
+      </div>)}</> : null}
       {drawer === "shift" ? <><h2>Turno de caja</h2>{!shift ? <><p>No hay turno abierto.</p><label className="field">Fondo inicial<input type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label><button className="btn btn-success btn-wide" disabled={busy} onClick={openShift}>Abrir turno</button></> : <><div className="status status-info">Abierto por {shift.staff.name} el {new Date(shift.openedAt).toLocaleString("es-MX")}. Fondo: {formatMoney(shift.openingCashCents)}</div><label className="field">Efectivo contado<input type="number" min="0" step="0.01" value={closingCash} onChange={(event) => setClosingCash(event.target.value)} /></label><label className="field">Total de terminal<input type="number" min="0" step="0.01" value={terminalCounted} onChange={(event) => setTerminalCounted(event.target.value)} /></label><label className="field">Notas<textarea value={closeNotes} onChange={(event) => setCloseNotes(event.target.value)} /></label><button className="btn btn-danger btn-wide" disabled={busy || closingCash === "" || terminalCounted === ""} onClick={closeShift}>Cerrar y conciliar turno</button></>}</> : null}
+      {drawer === "staff" ? <><h2>Empleados</h2>
+        <div className="status status-info">Solo el gerente puede crear, cambiar PINes o desactivar usuarios.</div>
+        <p>Para cambiar un PIN, escribe exactamente el mismo primer nombre y asigna el PIN nuevo.</p>
+        <form onSubmit={saveStaff}>
+          <label className="field">Nombre<input value={staffName} onChange={(event) => setStaffName(event.target.value)} required minLength={2} maxLength={80} /></label>
+          <label className="field">PIN de 4 a 8 dígitos<input value={staffPin} onChange={(event) => setStaffPin(event.target.value.replace(/\D/g, "").slice(0, 8))} required pattern="[0-9]{4,8}" inputMode="numeric" type="password" autoComplete="new-password" /></label>
+          <button className="btn btn-success btn-wide" disabled={busy || staffName.trim().length < 2 || staffPin.length < 4}>Guardar usuario o actualizar PIN</button>
+        </form>
+        <h3>Usuarios autorizados</h3>
+        {staffMembers.map((member) => <div className="staff-row" key={member.id}>
+          <div><strong>{member.name}</strong><br /><small>{member.role === "MANAGER" ? "Gerente" : "Empleado"} · {member.active ? "Activo" : "Desactivado"}</small></div>
+          {member.role !== "MANAGER" ? <button className={`btn ${member.active ? "btn-danger" : "btn-success"}`} disabled={busy} onClick={() => toggleStaff(member)}>{member.active ? "Desactivar" : "Activar"}</button> : null}
+        </div>)}
+      </> : null}
     </aside></> : null}
   </div>;
 }

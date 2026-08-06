@@ -78,7 +78,8 @@ button { touch-action: manipulation; }
 .drawer h2 { margin-top: 0; }
 .sale-card { border: 1px solid #e2d8cb; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
 .sale-card-head { display: flex; justify-content: space-between; gap: 12px; }
-.sale-card-actions { display: flex; gap: 8px; margin-top: 10px; }
+.sale-card-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.staff-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid #eee5db; }
 .badge { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 800; background: #eee3d4; }
 .badge.pending { background: #fff0c7; color: #704d00; }
 

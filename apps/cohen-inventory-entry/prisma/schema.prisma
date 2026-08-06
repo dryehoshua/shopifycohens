@@ -292,6 +292,7 @@ model CafeStaff {
   normalizedName String
   pinSalt        String
   pinHash        String
+  role           String   @default("CASHIER")
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -371,6 +372,8 @@ model CafeSale {
   syncedAt         DateTime?
   lastPrintedAt    DateTime?
   printCount       Int               @default(0)
+  cancelledAt      DateTime?
+  cancelledByName  String?
 
   @@unique([shop, idempotencyKey])
   @@index([shop, createdAt])

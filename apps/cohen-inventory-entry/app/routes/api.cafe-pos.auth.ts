@@ -15,7 +15,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return Response.json({
       ok: true,
       authenticated: Boolean(session),
-      staff: session ? { id: session.staff.id, name: session.staff.name } : null,
+      staff: session ? { id: session.staff.id, name: session.staff.name, role: session.staff.role } : null,
     });
   } catch (error) {
     return cafePosJsonError(error);
