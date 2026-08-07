@@ -322,93 +322,11 @@ export async function cafeLocation(admin?: GraphqlAdmin) {
   return location;
 }
 
-export async function getCafeCatalog() {
-  const { admin } = await adminContext();
-  const location = await cafeLocation(admin);
-  const data = await graphql<{
-    products: {
-      nodes: Array<{
-        id: string;
-        title: string;
-        handle: string;
-        featuredMedia: { preview: { image: { url: string; altText: string | null } | null } | null } | null;
-        variants: {
-          nodes: Array<{
-            id: string;
-            title: string;
-            sku: string | null;
-            price: string;
-            inventoryItem: {
-              tracked: boolean;
-              inventoryLevel: { quantities: Array<{ name: string; quantity: number }> } | null;
-            };
-          }>;
-        };
-      }>;
-    };
-  }>(admin, `#graphql
-    query CafePosCatalog($locationId: ID!) {
-      products(first: 100, query: "status:active tag:cohens-cafe", sortKey: TITLE) {
-        nodes {
-          id title handle
-          featuredMedia { preview { image { url altText } } }
-          variants(first: 100) {
-            nodes {
-              id title sku price
-              inventoryItem {
-                tracked
-                inventoryLevel(locationId: $locationId) {
-                  quantities(names: ["available"]) { name quantity }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `, { locationId: location.id });
-  return {
-    location,
-    products: data.products.nodes.map((product) => ({
-      id: product.id,
-      title: product.title,
-      handle: product.handle,
-      imageUrl: product.featuredMedia?.preview?.image?.url ?? null,
-      imageAlt: product.featuredMedia?.preview?.image?.altText ?? product.title,
-      variants: product.variants.nodes.map((variant) => ({
-        id: variant.id,
-        title: variant.title,
-        sku: variant.sku,
-        priceCents: parseShopifyMoneyToCents(variant.price),
-        tracked: variant.inventoryItem.tracked,
-        available: variant.inventoryItem.inventoryLevel?.quantities.find((quantity) => quantity.name === "available")?.quantity ?? 0,
-      })),
-    })),
-  };
-}
-
-export async function makeCafeInventoryUnlimited(request: Request) {
-  await requireCafeManager(request);
-  const { admin } = await adminContext();
-  const data = await graphql<{
-    products: {
-      nodes: Array<{
-        variants: { nodes: Array<{ inventoryItem: { id: string; tracked: boolean } }> };
-      }>;
-    };
-  }>(admin, `#graphql
-    query CafeInventoryTracking {
-      products(first: 100, query: "tag:cohens-cafe") {
-        nodes {
-          variants(first: 100) { nodes { inventoryItem { id tracked } } }
-        }
-      }
-    }
-  `);
-  const trackedItems = data.products.nodes
-    .flatMap((product) => product.variants.nodes)
-    .map((variant) => variant.inventoryItem)
-    .filter((item) => item.tracked);
+async function disableCafeInventoryTracking(
+  admin: GraphqlAdmin,
+  items: Array<{ id: string; tracked: boolean }>,
+) {
+  const trackedItems = items.filter((item) => item.tracked);
   for (const item of trackedItems) {
     const result = await graphql<{
       inventoryItemUpdate: {
@@ -431,7 +349,101 @@ export async function makeCafeInventoryUnlimited(request: Request) {
       );
     }
   }
-  return { updated: trackedItems.length };
+  return trackedItems.length;
+}
+
+export async function getCafeCatalog() {
+  const { admin } = await adminContext();
+  const location = await cafeLocation(admin);
+  const data = await graphql<{
+    products: {
+      nodes: Array<{
+        id: string;
+        title: string;
+        handle: string;
+        featuredMedia: { preview: { image: { url: string; altText: string | null } | null } | null } | null;
+        variants: {
+          nodes: Array<{
+            id: string;
+            title: string;
+            sku: string | null;
+            price: string;
+            inventoryItem: {
+              id: string;
+              tracked: boolean;
+              inventoryLevel: { quantities: Array<{ name: string; quantity: number }> } | null;
+            };
+          }>;
+        };
+      }>;
+    };
+  }>(admin, `#graphql
+    query CafePosCatalog($locationId: ID!) {
+      products(first: 100, query: "status:active", sortKey: TITLE) {
+        nodes {
+          id title handle
+          featuredMedia { preview { image { url altText } } }
+          variants(first: 100) {
+            nodes {
+              id title sku price
+              inventoryItem {
+                id tracked
+                inventoryLevel(locationId: $locationId) {
+                  quantities(names: ["available"]) { name quantity }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `, { locationId: location.id });
+  await disableCafeInventoryTracking(
+    admin,
+    data.products.nodes.flatMap((product) => product.variants.nodes.map((variant) => variant.inventoryItem)),
+  );
+  return {
+    location,
+    products: data.products.nodes.map((product) => ({
+      id: product.id,
+      title: product.title,
+      handle: product.handle,
+      imageUrl: product.featuredMedia?.preview?.image?.url ?? null,
+      imageAlt: product.featuredMedia?.preview?.image?.altText ?? product.title,
+      variants: product.variants.nodes.map((variant) => ({
+        id: variant.id,
+        title: variant.title,
+        sku: variant.sku,
+        priceCents: parseShopifyMoneyToCents(variant.price),
+        tracked: false,
+        available: variant.inventoryItem.inventoryLevel?.quantities.find((quantity) => quantity.name === "available")?.quantity ?? 0,
+      })),
+    })),
+  };
+}
+
+export async function makeCafeInventoryUnlimited(request: Request) {
+  await requireCafeManager(request);
+  const { admin } = await adminContext();
+  const data = await graphql<{
+    products: {
+      nodes: Array<{
+        variants: { nodes: Array<{ inventoryItem: { id: string; tracked: boolean } }> };
+      }>;
+    };
+  }>(admin, `#graphql
+    query CafeInventoryTracking {
+      products(first: 100) {
+        nodes {
+          variants(first: 100) { nodes { inventoryItem { id tracked } } }
+        }
+      }
+    }
+  `);
+  const inventoryItems = data.products.nodes
+    .flatMap((product) => product.variants.nodes)
+    .map((variant) => variant.inventoryItem);
+  return { updated: await disableCafeInventoryTracking(admin, inventoryItems) };
 }
 
 export async function currentCafeShift(shop = configuredShop()) {

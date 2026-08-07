@@ -215,6 +215,7 @@ export default function CafePos() {
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffName, setStaffName] = useState("");
   const [staffPin, setStaffPin] = useState("");
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
 
@@ -224,12 +225,22 @@ export default function CafePos() {
       api<{ sales: Sale[] }>("/api/cafe-pos/orders?limit=40"),
       api<{ shift: Shift | null }>("/api/cafe-pos/shift"),
     ]);
-    setProducts(catalogResult.products); setSales(salesResult.sales); setShift(shiftResult.shift);
+    setProducts(catalogResult.products); setSales(salesResult.sales); setShift(shiftResult.shift); setLastUpdatedAt(new Date());
   }, []);
 
   useEffect(() => {
-    loadData().catch((error) => setMessage({ tone: "error", text: error.message }));
+    const refresh = () => loadData().catch((error) => setMessage({ tone: "error", text: error.message }));
+    const refreshWhenVisible = () => { if (!document.hidden) refresh(); };
+    refresh();
+    const interval = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/cafe-pos-sw.js").catch(() => undefined);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -458,7 +469,7 @@ export default function CafePos() {
     </header>
     <div className="pos-layout">
       <main className="menu-pane">
-        <div className="section-title"><h2>Menú</h2><span>{products.length} productos</span></div>
+        <div className="section-title"><h2>Menú</h2><div className="section-title-actions"><span>{products.length} productos{lastUpdatedAt ? ` · ${lastUpdatedAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}` : ""}</span><button className="btn btn-secondary" onClick={() => loadData().catch((error) => setMessage({ tone: "error", text: error.message }))}>Actualizar</button></div></div>
         {message ? <div className={`status status-${message.tone}`}>{message.text}</div> : null}
         {!shift ? <div className="status status-warning">Abre un turno de caja antes de registrar ventas.</div> : null}
         <div className="product-grid">{products.map((product) => <article className="product-card" key={product.id}>
