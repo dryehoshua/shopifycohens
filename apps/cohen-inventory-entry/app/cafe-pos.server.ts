@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import db from "./db.server";
 import { unauthenticated } from "./shopify.server";
 import {
@@ -387,6 +387,53 @@ export async function getCafeCatalog() {
   };
 }
 
+export async function makeCafeInventoryUnlimited(request: Request) {
+  await requireCafeManager(request);
+  const { admin } = await adminContext();
+  const data = await graphql<{
+    products: {
+      nodes: Array<{
+        variants: { nodes: Array<{ inventoryItem: { id: string; tracked: boolean } }> };
+      }>;
+    };
+  }>(admin, `#graphql
+    query CafeInventoryTracking {
+      products(first: 100, query: "tag:cohens-cafe") {
+        nodes {
+          variants(first: 100) { nodes { inventoryItem { id tracked } } }
+        }
+      }
+    }
+  `);
+  const trackedItems = data.products.nodes
+    .flatMap((product) => product.variants.nodes)
+    .map((variant) => variant.inventoryItem)
+    .filter((item) => item.tracked);
+  for (const item of trackedItems) {
+    const result = await graphql<{
+      inventoryItemUpdate: {
+        inventoryItem: { id: string; tracked: boolean } | null;
+        userErrors: Array<{ message: string }>;
+      };
+    }>(admin, `#graphql
+      mutation CafeInventoryUnlimited($id: ID!) {
+        inventoryItemUpdate(id: $id, input: { tracked: false }) {
+          inventoryItem { id tracked }
+          userErrors { message }
+        }
+      }
+    `, { id: item.id });
+    if (result.inventoryItemUpdate.userErrors.length || result.inventoryItemUpdate.inventoryItem?.tracked !== false) {
+      throw new CafePosError(
+        result.inventoryItemUpdate.userErrors.map((error) => error.message).join("; ") || "Shopify no desactivó el seguimiento de inventario.",
+        502,
+        "INVENTORY_UNLIMITED_REJECTED",
+      );
+    }
+  }
+  return { updated: trackedItems.length };
+}
+
 export async function currentCafeShift(shop = configuredShop()) {
   return db.cafeRegisterShift.findFirst({
     where: { shop, status: "OPEN" },
@@ -661,63 +708,94 @@ export async function recentCafeSales(request: Request, limit = 30) {
   });
 }
 
-export async function cancelCafeSale(request: Request, saleId: string, managerPin?: unknown) {
+export async function refundCafeSale(request: Request, saleId: string, managerPin?: unknown) {
   const authorization = await requireCafeManager(request, managerPin);
   const sale = await db.cafeSale.findFirst({
     where: { id: saleId, shop: authorization.session.shop },
     include: { staff: { select: { name: true } } },
   });
   if (!sale) throw new CafePosError("No se encontró la venta.", 404, "SALE_NOT_FOUND");
-  if (sale.status === "CANCELLED") return sale;
+  if (sale.status === "REFUNDED") return sale;
   if (sale.status !== "SYNCED" || !sale.shopifyOrderId) {
-    throw new CafePosError("Solo se pueden cancelar pedidos ya sincronizados con Shopify.", 409, "SALE_NOT_CANCELLABLE");
+    throw new CafePosError("Solo se pueden reembolsar pedidos ya sincronizados con Shopify.", 409, "SALE_NOT_REFUNDABLE");
   }
 
   const { admin } = await adminContext();
+  const orderData = await graphql<{
+    order: {
+      lineItems: { nodes: Array<{ id: string; refundableQuantity: number }> };
+      transactions: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        gateway: string;
+      }>;
+    } | null;
+  }>(admin, `#graphql
+    query CafePosRefundOrder($id: ID!) {
+      order(id: $id) {
+        lineItems(first: 100) { nodes { id refundableQuantity } }
+        transactions(first: 20) { id kind status gateway }
+      }
+    }
+  `, { id: sale.shopifyOrderId });
+  if (!orderData.order) throw new CafePosError("Shopify no encontró el pedido.", 404, "SHOPIFY_ORDER_NOT_FOUND");
+  const parentTransaction = orderData.order.transactions.find((transaction) =>
+    transaction.status === "SUCCESS" && (transaction.kind === "SALE" || transaction.kind === "CAPTURE"),
+  );
+  if (!parentTransaction) {
+    throw new CafePosError("Shopify no encontró el cobro original que debe reembolsarse.", 409, "REFUND_TRANSACTION_MISSING");
+  }
+  const refundLineItems = orderData.order.lineItems.nodes
+    .filter((item) => item.refundableQuantity > 0)
+    .map((item) => ({ lineItemId: item.id, quantity: item.refundableQuantity, restockType: "NO_RESTOCK" }));
+  if (!refundLineItems.length) {
+    throw new CafePosError("El pedido ya no contiene artículos reembolsables.", 409, "ALREADY_REFUNDED");
+  }
+  const refundKey = sale.refundIdempotencyKey ?? randomUUID();
+  if (!sale.refundIdempotencyKey) {
+    await db.cafeSale.update({ where: { id: sale.id }, data: { refundIdempotencyKey: refundKey } });
+  }
   const result = await graphql<{
-    orderCancel: {
-      job: { id: string; done: boolean } | null;
-      orderCancelUserErrors: Array<{ field?: string[]; message: string; code?: string }>;
+    refundCreate: {
+      refund: { id: string } | null;
+      userErrors: Array<{ field?: string[]; message: string }>;
     };
   }>(admin, `#graphql
-    mutation CafePosOrderCancel(
-      $orderId: ID!
-      $refundMethod: OrderCancelRefundMethodInput!
-      $restock: Boolean!
-      $reason: OrderCancelReason!
-      $staffNote: String
-    ) {
-      orderCancel(
-        orderId: $orderId
-        refundMethod: $refundMethod
-        restock: $restock
-        reason: $reason
-        staffNote: $staffNote
-      ) {
-        job { id done }
-        orderCancelUserErrors { field message code }
+    mutation CafePosRefund($input: RefundInput!) {
+      refundCreate(input: $input) @idempotent(key: "${refundKey}") {
+        refund { id }
+        userErrors { field message }
       }
     }
   `, {
-    orderId: sale.shopifyOrderId,
-    refundMethod: { originalPaymentMethodsRefund: true },
-    restock: true,
-    reason: "STAFF",
-    staffNote: `Cancelado desde POS web por ${authorization.managerName}. Venta local ${sale.id}.`,
+    input: {
+      orderId: sale.shopifyOrderId,
+      note: `Reembolso completo desde POS web autorizado por ${authorization.managerName}. Venta local ${sale.id}.`,
+      refundLineItems,
+      transactions: [{
+        orderId: sale.shopifyOrderId,
+        parentId: parentTransaction.id,
+        gateway: parentTransaction.gateway,
+        kind: "REFUND",
+        amount: (sale.totalCents / 100).toFixed(2),
+      }],
+    },
   });
-  if (result.orderCancel.orderCancelUserErrors.length) {
+  if (result.refundCreate.userErrors.length || !result.refundCreate.refund) {
     throw new CafePosError(
-      result.orderCancel.orderCancelUserErrors.map((error) => error.message).join("; "),
+      result.refundCreate.userErrors.map((error) => error.message).join("; ") || "Shopify no registró el reembolso.",
       409,
-      "ORDER_CANCEL_REJECTED",
+      "ORDER_REFUND_REJECTED",
     );
   }
   return db.cafeSale.update({
     where: { id: sale.id },
     data: {
-      status: "CANCELLED",
-      cancelledAt: new Date(),
-      cancelledByName: authorization.managerName,
+      status: "REFUNDED",
+      refundedAt: new Date(),
+      refundedByName: authorization.managerName,
+      shopifyRefundId: result.refundCreate.refund.id,
       errorMessage: null,
     },
     include: { staff: { select: { name: true } } },

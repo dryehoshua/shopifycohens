@@ -86,6 +86,8 @@ type Sale = {
   printCount?: number;
   cancelledAt?: string | null;
   cancelledByName?: string | null;
+  refundedAt?: string | null;
+  refundedByName?: string | null;
 };
 type StaffMember = {
   id: string;
@@ -332,26 +334,26 @@ export default function CafePos() {
     } finally { setBusy(false); }
   }
 
-  async function cancelSale(sale: Sale) {
-    if (!window.confirm(`¿Cancelar ${sale.shopifyOrderName || sale.id.slice(-8)}? Esta acción no se puede deshacer y el inventario se repondrá.`)) return;
+  async function refundSale(sale: Sale) {
+    if (!window.confirm(`¿Registrar el reembolso completo de ${sale.shopifyOrderName || sale.id.slice(-8)}? La venta permanecerá en el historial como reembolsada.`)) return;
     const managerPin = initial.staff?.role === "MANAGER"
       ? undefined
-      : window.prompt("Ingresa el PIN maestro del gerente para cancelar el pedido:");
+      : window.prompt("Ingresa el PIN maestro del gerente para reembolsar el pedido:");
     if (initial.staff?.role !== "MANAGER" && managerPin === null) return;
     setBusy(true); setMessage(null);
     try {
       const result = await api<{ sale: Sale }>("/api/cafe-pos/orders", {
         method: "POST",
-        body: JSON.stringify({ cancelSaleId: sale.id, managerPin }),
+        body: JSON.stringify({ refundSaleId: sale.id, managerPin }),
       });
       setSales((current) => current.map((item) => item.id === result.sale.id ? result.sale : item));
       setMessage({
         tone: "success",
-        text: `Pedido ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} cancelado. Devuelve el efectivo o revierte el cobro en la terminal física si corresponde.`,
+        text: `Pedido ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} reembolsado en Shopify. Devuelve el efectivo o revierte el cobro en la terminal física si corresponde.`,
       });
       await loadData();
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo cancelar el pedido." });
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo reembolsar el pedido." });
     } finally { setBusy(false); }
   }
 
@@ -483,13 +485,14 @@ export default function CafePos() {
       <button className="btn btn-secondary" onClick={() => setDrawer(null)}>Cerrar</button>
       {drawer === "orders" ? <><h2>Pedidos recientes</h2>{sales.map((sale) => <div className="sale-card" key={sale.id}>
         <div className="sale-card-head"><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><br /><small>{new Date(sale.createdAt).toLocaleString("es-MX")} · {sale.staff.name}</small></div><strong>{formatMoney(sale.totalCents)}</strong></div>
-        <span className={`badge ${sale.status !== "SYNCED" && sale.status !== "CANCELLED" ? "pending" : ""}`}>{sale.status === "SYNCED" ? "Sincronizado" : sale.status === "CANCELLED" ? "Cancelado" : "Pendiente"}</span>
+        <span className={`badge ${sale.status !== "SYNCED" && sale.status !== "REFUNDED" && sale.status !== "CANCELLED" ? "pending" : ""}`}>{sale.status === "SYNCED" ? "Sincronizado" : sale.status === "REFUNDED" ? "Reembolsado" : sale.status === "CANCELLED" ? "Cancelado" : "Pendiente"}</span>
+        {sale.status === "REFUNDED" && sale.refundedByName ? <div className="status status-info">Reembolsado por {sale.refundedByName}. Se conserva en el historial.</div> : null}
         {sale.status === "CANCELLED" && sale.cancelledByName ? <div className="status status-info">Cancelado por {sale.cancelledByName}.</div> : null}
         {sale.errorMessage ? <div className="status status-warning">{sale.errorMessage}</div> : null}
         <div className="sale-card-actions">
           <button className="btn btn-secondary" onClick={() => printSale(sale)}>Reimprimir</button>
-          {sale.status === "SYNCED" ? <button className="btn btn-danger" disabled={busy} onClick={() => cancelSale(sale)}>Cancelar pedido</button> : null}
-          {sale.status !== "SYNCED" && sale.status !== "CANCELLED" ? <button className="btn btn-primary" disabled={busy} onClick={() => retrySale(sale)}>Reintentar sincronización</button> : null}
+          {sale.status === "SYNCED" ? <button className="btn btn-danger" disabled={busy} onClick={() => refundSale(sale)}>Reembolsar pedido</button> : null}
+          {sale.status !== "SYNCED" && sale.status !== "REFUNDED" && sale.status !== "CANCELLED" ? <button className="btn btn-primary" disabled={busy} onClick={() => retrySale(sale)}>Reintentar sincronización</button> : null}
         </div>
       </div>)}</> : null}
       {drawer === "shift" ? <><h2>Turno de caja</h2>{!shift ? <><p>No hay turno abierto.</p><label className="field">Fondo inicial<input type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label><button className="btn btn-success btn-wide" disabled={busy} onClick={openShift}>Abrir turno</button></> : <><div className="status status-info">Abierto por {shift.staff.name} el {new Date(shift.openedAt).toLocaleString("es-MX")}. Fondo: {formatMoney(shift.openingCashCents)}</div><label className="field">Efectivo contado<input type="number" min="0" step="0.01" value={closingCash} onChange={(event) => setClosingCash(event.target.value)} /></label><label className="field">Total de terminal<input type="number" min="0" step="0.01" value={terminalCounted} onChange={(event) => setTerminalCounted(event.target.value)} /></label><label className="field">Notas<textarea value={closeNotes} onChange={(event) => setCloseNotes(event.target.value)} /></label><button className="btn btn-danger btn-wide" disabled={busy || closingCash === "" || terminalCounted === ""} onClick={closeShift}>Cerrar y conciliar turno</button></>}</> : null}

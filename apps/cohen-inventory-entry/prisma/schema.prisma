@@ -374,6 +374,10 @@ model CafeSale {
   printCount       Int               @default(0)
   cancelledAt      DateTime?
   cancelledByName  String?
+  refundedAt       DateTime?
+  refundedByName   String?
+  shopifyRefundId  String?
+  refundIdempotencyKey String? @unique
 
   @@unique([shop, idempotencyKey])
   @@index([shop, createdAt])
