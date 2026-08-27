@@ -18,6 +18,7 @@ const requiredScopes = [
   "read_orders",
   "write_orders",
   "read_all_orders",
+  "read_customers",
 ];
 
 const configuredScopes = Array.from(

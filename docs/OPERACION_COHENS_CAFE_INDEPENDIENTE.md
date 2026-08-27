@@ -3,9 +3,10 @@
 ## Arquitectura productiva
 
 Cohen's Cafe opera como una tercera tienda Shopify separada de `main` y `dev`.
-No comparte catálogo, pedidos, inventario, sesiones ni base externa con la tienda
-principal. La misma base de código se despliega como otro servicio, con una
-aplicación Shopify, dominio HTTPS, volumen y variables propias.
+No comparte catálogo, pedidos ni inventario con la tienda principal. Nekudot es
+la excepción deliberada: ambas instalaciones deben conectarse al mismo servicio
+y base central de Cohens Operations para que tarjeta, saldo y broker sean
+únicos. Las sesiones continúan separadas por dominio de tienda.
 
 Configuración prevista:
 
@@ -37,10 +38,10 @@ El inventario es híbrido:
 1. Crear la tienda y conservarla en prueba.
 2. Crear una aplicación Shopify distinta usando
    `shopify.app.cafe.example.toml` como plantilla.
-3. Crear otro servicio Railway desde el mismo repositorio y directorio
-   `/apps/cohen-inventory-entry`.
-4. Asignar un volumen independiente en `/data` y
-   `DATABASE_URL=file:/data/cafe.sqlite`.
+3. Instalar Cohens Operations para la cafetería apuntando al mismo backend
+   central del programa Nekudot.
+4. Mantener una sola réplica mientras la base central sea SQLite; migrar a
+   PostgreSQL antes de separar o escalar servicios.
 5. Configurar credenciales exclusivas, `CAFE_POS_ENABLED=true`,
    `CAFE_SHOP_DOMAIN` y `CAFE_LOCATION_NAME`.
 6. Instalar la aplicación únicamente en la tienda de cafetería.

@@ -19,7 +19,7 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "node --test app/cafe-pos-domain.test.ts",
+    "test": "node --test app/cafe-pos-domain.test.ts app/nekudot-domain.test.ts",
     "catalog:dry-run": "node scripts/import-products-to-dev.mjs",
     "catalog:pilot": "node scripts/import-products-to-dev.mjs --pilot",
     "catalog:import": "node scripts/import-products-to-dev.mjs --all",

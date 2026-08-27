@@ -134,23 +134,23 @@ model InventoryAuditEvent {
 /// El historial de una ejecución fallida se conserva; una ejecución posterior
 /// actualiza los pedidos de manera idempotente mediante su ID de Shopify.
 model SalesSyncRun {
-  id              String    @id @default(cuid())
-  sourceShop      String
-  source          String    @default("SHOPIFY_ADMIN_API")
-  status          String    @default("RUNNING")
-  startedAt       DateTime  @default(now())
-  completedAt     DateTime?
-  costCapturedAt  DateTime  @default(now())
-  ordersSeen      Int       @default(0)
-  ordersImported  Int       @default(0)
-  lineItemsSeen   Int       @default(0)
-  refundsSeen     Int       @default(0)
-  oldestOrderAt   DateTime?
-  newestOrderAt   DateTime?
-  errorMessage    String?
-  metadata        Json?
+  id             String    @id @default(cuid())
+  sourceShop     String
+  source         String    @default("SHOPIFY_ADMIN_API")
+  status         String    @default("RUNNING")
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  costCapturedAt DateTime  @default(now())
+  ordersSeen     Int       @default(0)
+  ordersImported Int       @default(0)
+  lineItemsSeen  Int       @default(0)
+  refundsSeen    Int       @default(0)
+  oldestOrderAt  DateTime?
+  newestOrderAt  DateTime?
+  errorMessage   String?
+  metadata       Json?
 
-  orders       SalesOrder[]
+  orders        SalesOrder[]
   costSnapshots ProductCostSnapshot[]
 
   @@index([sourceShop, startedAt])
@@ -161,36 +161,36 @@ model SalesSyncRun {
 ///
 /// Los importes se guardan en centavos para evitar errores de redondeo.
 model SalesOrder {
-  id                      String    @id @default(cuid())
-  sourceShop              String
-  shopifyOrderId          String
-  name                    String
-  createdAt               DateTime
-  processedAt             DateTime?
-  shopifyUpdatedAt        DateTime
-  importedAt              DateTime  @default(now())
-  cancelledAt             DateTime?
-  currencyCode            String
-  financialStatus         String?
-  fulfillmentStatus       String?
-  sourceName              String?
-  test                    Boolean   @default(false)
-  includedInProfit        Boolean   @default(false)
-  originalSalesCents      Int       @default(0)
-  discountCents           Int       @default(0)
-  refundedProductCents    Int       @default(0)
-  refundedPaymentCents    Int       @default(0)
-  netSalesCents           Int       @default(0)
-  taxCents                Int       @default(0)
-  currentTotalCents       Int       @default(0)
-  originalItemQuantity    Int       @default(0)
-  netItemQuantity         Int       @default(0)
-  calculableCostCents     Int       @default(0)
-  calculableProfitCents   Int       @default(0)
-  coveredNetSalesCents    Int       @default(0)
-  missingCostSalesCents   Int       @default(0)
-  profitComplete          Boolean   @default(false)
-  rawPayload              Json?
+  id                    String    @id @default(cuid())
+  sourceShop            String
+  shopifyOrderId        String
+  name                  String
+  createdAt             DateTime
+  processedAt           DateTime?
+  shopifyUpdatedAt      DateTime
+  importedAt            DateTime  @default(now())
+  cancelledAt           DateTime?
+  currencyCode          String
+  financialStatus       String?
+  fulfillmentStatus     String?
+  sourceName            String?
+  test                  Boolean   @default(false)
+  includedInProfit      Boolean   @default(false)
+  originalSalesCents    Int       @default(0)
+  discountCents         Int       @default(0)
+  refundedProductCents  Int       @default(0)
+  refundedPaymentCents  Int       @default(0)
+  netSalesCents         Int       @default(0)
+  taxCents              Int       @default(0)
+  currentTotalCents     Int       @default(0)
+  originalItemQuantity  Int       @default(0)
+  netItemQuantity       Int       @default(0)
+  calculableCostCents   Int       @default(0)
+  calculableProfitCents Int       @default(0)
+  coveredNetSalesCents  Int       @default(0)
+  missingCostSalesCents Int       @default(0)
+  profitComplete        Boolean   @default(false)
+  rawPayload            Json?
 
   lastSyncRunId String?
   lastSyncRun   SalesSyncRun? @relation(fields: [lastSyncRunId], references: [id], onDelete: SetNull)
@@ -207,34 +207,34 @@ model SalesOrder {
 
 /// Partida de venta con venta neta y costo vigente capturado.
 model SalesLineItem {
-  id                          String   @id @default(cuid())
-  orderId                     String
-  order                       SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  shopifyLineItemId           String
-  shopifyProductId            String?
-  shopifyVariantId            String?
-  shopifyInventoryItemId      String?
-  productHandle               String?
-  productTitle                String
-  variantTitle                String?
-  sku                         String?
-  originalQuantity            Int
-  netQuantity                 Int
-  refundedQuantity            Int      @default(0)
-  originalUnitPriceCents      Int
-  originalSalesCents          Int
-  discountCents               Int      @default(0)
-  refundedSalesCents          Int      @default(0)
-  netSalesCents               Int
-  currentUnitCostCents        Int?
-  calculatedCostCents         Int?
-  calculatedProfitCents       Int?
-  marginBasisPoints           Int?
-  costSource                  String?
-  costCapturedAt              DateTime?
-  missingCostReason           String?
-  importedAt                  DateTime @default(now())
-  rawPayload                  Json?
+  id                     String     @id @default(cuid())
+  orderId                String
+  order                  SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineItemId      String
+  shopifyProductId       String?
+  shopifyVariantId       String?
+  shopifyInventoryItemId String?
+  productHandle          String?
+  productTitle           String
+  variantTitle           String?
+  sku                    String?
+  originalQuantity       Int
+  netQuantity            Int
+  refundedQuantity       Int        @default(0)
+  originalUnitPriceCents Int
+  originalSalesCents     Int
+  discountCents          Int        @default(0)
+  refundedSalesCents     Int        @default(0)
+  netSalesCents          Int
+  currentUnitCostCents   Int?
+  calculatedCostCents    Int?
+  calculatedProfitCents  Int?
+  marginBasisPoints      Int?
+  costSource             String?
+  costCapturedAt         DateTime?
+  missingCostReason      String?
+  importedAt             DateTime   @default(now())
+  rawPayload             Json?
 
   @@unique([orderId, shopifyLineItemId])
   @@index([shopifyVariantId])
@@ -244,15 +244,15 @@ model SalesLineItem {
 
 /// Reembolso financiero y sus cantidades de producto asociadas.
 model SalesRefund {
-  id                 String   @id @default(cuid())
-  orderId            String
-  order              SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  shopifyRefundId    String
-  createdAt          DateTime
-  updatedAt          DateTime
-  successfulAmountCents Int   @default(0)
-  productSubtotalCents  Int   @default(0)
-  productQuantity       Int   @default(0)
+  id                    String     @id @default(cuid())
+  orderId               String
+  order                 SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyRefundId       String
+  createdAt             DateTime
+  updatedAt             DateTime
+  successfulAmountCents Int        @default(0)
+  productSubtotalCents  Int        @default(0)
+  productQuantity       Int        @default(0)
   transactionStatus     String?
   rawPayload            Json?
 
@@ -262,7 +262,7 @@ model SalesRefund {
 
 /// Historial del valor "Costo por artículo" utilizado en cada sincronización.
 model ProductCostSnapshot {
-  id                     String   @id @default(cuid())
+  id                     String       @id @default(cuid())
   sourceShop             String
   shopifyProductId       String?
   shopifyVariantId       String
@@ -273,8 +273,8 @@ model ProductCostSnapshot {
   sku                    String?
   unitCostCents          Int?
   currencyCode           String
-  source                 String   @default("SHOPIFY_INVENTORY_ITEM_UNIT_COST")
-  capturedAt             DateTime @default(now())
+  source                 String       @default("SHOPIFY_INVENTORY_ITEM_UNIT_COST")
+  capturedAt             DateTime     @default(now())
   syncRunId              String
   syncRun                SalesSyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
 
@@ -349,39 +349,215 @@ model CafeRegisterShift {
 /// Intento de venta de la POS. Se crea antes de llamar a Shopify para poder
 /// reintentar y reconciliar sin duplicar pedidos después de una falla de red.
 model CafeSale {
-  id               String            @id @default(cuid())
-  shop             String
-  idempotencyKey   String
-  status           String            @default("PENDING")
-  staffId          String
-  staff            CafeStaff         @relation(fields: [staffId], references: [id], onDelete: Restrict)
-  shiftId          String
-  shift            CafeRegisterShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
-  paymentMethod    String
-  externalReference String?
-  subtotalCents    Int
-  taxCents         Int               @default(0)
-  totalCents       Int
-  currencyCode     String            @default("MXN")
-  items            Json
-  shopifyOrderId   String?
-  shopifyOrderName String?
-  errorMessage     String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  syncedAt         DateTime?
-  lastPrintedAt    DateTime?
-  printCount       Int               @default(0)
-  cancelledAt      DateTime?
-  cancelledByName  String?
-  refundedAt       DateTime?
-  refundedByName   String?
-  shopifyRefundId  String?
-  refundIdempotencyKey String? @unique
+  id                   String            @id @default(cuid())
+  shop                 String
+  idempotencyKey       String
+  status               String            @default("PENDING")
+  staffId              String
+  staff                CafeStaff         @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  shiftId              String
+  shift                CafeRegisterShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  paymentMethod        String
+  externalReference    String?
+  subtotalCents        Int
+  taxCents             Int               @default(0)
+  totalCents           Int
+  currencyCode         String            @default("MXN")
+  items                Json
+  shopifyOrderId       String?
+  shopifyOrderName     String?
+  errorMessage         String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  syncedAt             DateTime?
+  lastPrintedAt        DateTime?
+  printCount           Int               @default(0)
+  cancelledAt          DateTime?
+  cancelledByName      String?
+  refundedAt           DateTime?
+  refundedByName       String?
+  shopifyRefundId      String?
+  refundIdempotencyKey String?           @unique
+  nekudotMemberId      String?
+  nekudotRedemptionId  String?
+  nekudotRedeemedCents Int               @default(0)
 
   @@unique([shop, idempotencyKey])
   @@index([shop, createdAt])
   @@index([shop, status, createdAt])
   @@index([shiftId, paymentMethod])
   @@index([shopifyOrderId])
+  @@index([nekudotMemberId])
+  @@index([nekudotRedemptionId])
+}
+
+/// Miembro único del programa Nekudot Cohen's. Su wallet se comparte entre
+/// todas las tiendas Shopify conectadas al mismo backend.
+model NekudotMember {
+  id                    String         @id @default(cuid())
+  programKey            String         @default("cohens")
+  displayName           String
+  email                 String?
+  phone                 String?
+  active                Boolean        @default(true)
+  currencyCode          String         @default("MXN")
+  balanceCents          Int            @default(0)
+  reservedCents         Int            @default(0)
+  lifetimeEarnedCents   Int            @default(0)
+  lifetimeRedeemedCents Int            @default(0)
+  brokerId              String?
+  broker                NekudotBroker? @relation(fields: [brokerId], references: [id], onDelete: SetNull)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  identities  NekudotCustomerIdentity[]
+  credentials NekudotCredential[]
+  ledger      NekudotLedgerEntry[]
+  accruals    NekudotOrderAccrual[]
+  redemptions NekudotRedemption[]
+
+  @@index([programKey, active, updatedAt])
+  @@index([brokerId, active])
+  @@index([programKey, displayName])
+}
+
+/// Perfil comercial del broker. La comisión no se mezcla con los Nekudot
+/// canjeables del cliente y puede conciliarse o pagarse por separado.
+model NekudotBroker {
+  id                      String   @id @default(cuid())
+  programKey              String   @default("cohens")
+  code                    String
+  displayName             String
+  email                   String?
+  phone                   String?
+  active                  Boolean  @default(true)
+  commissionBalanceCents  Int      @default(0)
+  lifetimeCommissionCents Int      @default(0)
+  paidOutCents            Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  clients  NekudotMember[]
+  ledger   NekudotLedgerEntry[]
+  accruals NekudotOrderAccrual[]
+
+  @@unique([programKey, code])
+  @@index([programKey, active, displayName])
+}
+
+/// Enlace entre el miembro central y su perfil de cliente en cada tienda.
+model NekudotCustomerIdentity {
+  id                      String        @id @default(cuid())
+  programKey              String        @default("cohens")
+  memberId                String
+  member                  NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  shop                    String
+  shopifyCustomerId       String
+  shopifyLegacyCustomerId String
+  displayName             String
+  email                   String?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  @@unique([shop, shopifyCustomerId])
+  @@unique([memberId, shop])
+  @@index([programKey, shop, displayName])
+}
+
+/// RFID o QR global. El valor original nunca se persiste.
+model NekudotCredential {
+  id         String        @id @default(cuid())
+  programKey String        @default("cohens")
+  memberId   String
+  member     NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  tokenHash  String
+  lastFour   String
+  kind       String        @default("RFID_OR_QR")
+  label      String?
+  active     Boolean       @default(true)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([programKey, tokenHash])
+  @@index([memberId, active])
+}
+
+/// Libro mayor inmutable para cashback, comisión, canje, reversión y pagos.
+model NekudotLedgerEntry {
+  id                String         @id @default(cuid())
+  programKey        String         @default("cohens")
+  memberId          String?
+  member            NekudotMember? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  brokerId          String?
+  broker            NekudotBroker? @relation(fields: [brokerId], references: [id], onDelete: Cascade)
+  walletType        String
+  type              String
+  amountCents       Int
+  balanceAfterCents Int
+  currencyCode      String         @default("MXN")
+  shop              String?
+  source            String
+  sourceId          String?
+  idempotencyKey    String
+  description       String
+  occurredAt        DateTime       @default(now())
+  createdAt         DateTime       @default(now())
+  metadata          Json?
+
+  @@unique([programKey, idempotencyKey])
+  @@index([memberId, occurredAt])
+  @@index([brokerId, occurredAt])
+  @@index([programKey, shop, occurredAt])
+  @@index([programKey, source, sourceId])
+}
+
+/// Resultado vigente de aplicar 5% al cliente y 5% a su broker en un pedido.
+model NekudotOrderAccrual {
+  id                    String         @id @default(cuid())
+  programKey            String         @default("cohens")
+  shop                  String
+  shopifyOrderId        String
+  orderName             String
+  memberId              String
+  member                NekudotMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  brokerId              String?
+  broker                NekudotBroker? @relation(fields: [brokerId], references: [id], onDelete: SetNull)
+  originalPurchaseCents Int
+  purchaseCents         Int
+  clientEarnedCents     Int
+  brokerEarnedCents     Int
+  currencyCode          String         @default("MXN")
+  calculationHash       String
+  processedAt           DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@unique([shop, shopifyOrderId])
+  @@index([memberId, processedAt])
+  @@index([brokerId, processedAt])
+  @@index([programKey, processedAt])
+}
+
+/// Reserva temporal de saldo iniciada en POS. Sólo se carga al libro mayor
+/// cuando el webhook confirma el pedido pagado.
+model NekudotRedemption {
+  id             String        @id @default(cuid())
+  programKey     String        @default("cohens")
+  memberId       String
+  member         NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  shop           String
+  amountCents    Int
+  restoredCents  Int           @default(0)
+  status         String        @default("RESERVED")
+  idempotencyKey String
+  cartReference  String?
+  shopifyOrderId String?
+  expiresAt      DateTime
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  appliedAt      DateTime?
+  cancelledAt    DateTime?
+
+  @@unique([programKey, idempotencyKey])
+  @@index([memberId, status, expiresAt])
+  @@index([shop, shopifyOrderId])
 }

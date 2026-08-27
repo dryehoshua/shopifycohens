@@ -3,6 +3,7 @@ import type {
 } from "@shopify/shopify-app-react-router/server";
 import type { Prisma } from "@prisma/client";
 import db from "./db.server";
+import { reconcileNekudotOrder } from "./nekudot.server";
 
 type ShopifyMoney = {
   amount?: string | null;
@@ -25,6 +26,8 @@ const ORDER_QUERY = `#graphql
       displayFulfillmentStatus
       sourceName
       test
+      customer { id }
+      customAttributes { key value }
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet {
         shopMoney { amount currencyCode }
@@ -354,6 +357,14 @@ function summarizeOrder(order: ShopifyOrder, costCapturedAt: Date) {
     },
     lineItems,
     refunds,
+    cashback: {
+      customerId: (order.customer?.id as string | undefined) ?? null,
+      orderUpdatedAt: new Date(order.updatedAt),
+      customAttributes: (order.customAttributes ?? []) as Array<{
+        key: string;
+        value: string;
+      }>,
+    },
   };
 }
 
@@ -491,6 +502,22 @@ export async function syncSalesOrderFromAdmin({
 
     const summary = summarizeOrder(payload.data.order, costCapturedAt);
     await persistOrder(sourceShop, summary, syncRun.id);
+    await reconcileNekudotOrder({
+      shop: sourceShop,
+      shopifyOrderId: summary.order.shopifyOrderId,
+      orderName: summary.order.name,
+      customerId: summary.cashback.customerId,
+      currencyCode: summary.order.currencyCode,
+      eligibleFinancialStatus: summary.order.includedInProfit,
+      cancelled: Boolean(summary.order.cancelledAt),
+      orderUpdatedAt: summary.cashback.orderUpdatedAt,
+      purchaseCents: summary.lineItems.reduce(
+        (total: number, lineItem: ShopifyOrder) =>
+          total + Math.max(0, lineItem.netSalesCents),
+        0,
+      ),
+      customAttributes: summary.cashback.customAttributes,
+    });
     await db.salesSyncRun.update({
       where: { id: syncRun.id },
       data: {

@@ -1,0 +1,16 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "Nekudot Cohen's"
+uid = "33b566cc-9b9d-4f8a-9bc4-b285558baf0f"
+handle = "nekudot-pos"
+description = "Identifica miembros, asigna clientes y canjea Nekudot en Shopify POS"
+
+[[extensions.targeting]]
+module = "./src/Tile.jsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.jsx"
+target = "pos.home.modal.render"

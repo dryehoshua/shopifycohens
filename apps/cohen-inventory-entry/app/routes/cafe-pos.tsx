@@ -77,6 +77,9 @@ type Sale = {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  nekudotMemberId?: string | null;
+  nekudotRedemptionId?: string | null;
+  nekudotRedeemedCents?: number;
   currencyCode: string;
   items: Array<CafeReceiptItem & { variantId?: string }>;
   shopifyOrderName: string | null;
@@ -94,6 +97,16 @@ type StaffMember = {
   name: string;
   role: string;
   active: boolean;
+};
+type NekudotMember = {
+  id: string;
+  displayName: string;
+  email: string | null;
+  balanceCents: number;
+  reservedCents: number;
+  availableCents: number;
+  broker: { displayName: string; code: string } | null;
+  linkedToCafeShop: boolean;
 };
 
 type UsbEndpoint = { direction: string; endpointNumber: number };
@@ -186,6 +199,11 @@ function buildReceipt(sale: Sale) {
     text(receiptColumns(`  ${formatMoney(item.unitPriceCents)}`, formatMoney(item.totalCents)));
   }
   text("--------------------------------");
+  if (sale.nekudotRedeemedCents) {
+    const grossCents = sale.items.reduce((sum, item) => sum + item.totalCents, 0);
+    text(receiptColumns("Total artículos", formatMoney(grossCents)));
+    text(receiptColumns("Nekudot", `-${formatMoney(sale.nekudotRedeemedCents)}`));
+  }
   text(receiptColumns("Subtotal", formatMoney(sale.subtotalCents)));
   text(receiptColumns("IVA incluido", formatMoney(sale.taxCents)));
   command(27, 69, 1, 29, 33, 17);
@@ -215,6 +233,9 @@ export default function CafePos() {
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffName, setStaffName] = useState("");
   const [staffPin, setStaffPin] = useState("");
+  const [nekudotCredential, setNekudotCredential] = useState("");
+  const [nekudotMember, setNekudotMember] = useState<NekudotMember | null>(null);
+  const [nekudotRedeemAmount, setNekudotRedeemAmount] = useState("0");
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
@@ -253,6 +274,15 @@ export default function CafePos() {
   }, []);
 
   const totalCents = useMemo(() => cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0), [cart]);
+  const requestedNekudotCents = useMemo(() => {
+    const normalized = nekudotRedeemAmount.trim().replace(",", ".");
+    if (!/^\d+(?:\.\d{0,2})?$/.test(normalized)) return 0;
+    return Math.max(0, Math.round(Number(normalized) * 100));
+  }, [nekudotRedeemAmount]);
+  const appliedNekudotCents = nekudotMember
+    ? Math.min(requestedNekudotCents, nekudotMember.availableCents, totalCents)
+    : 0;
+  const amountDueCents = totalCents - appliedNekudotCents;
 
   function add(product: Product, variant: Variant) {
     if (variant.tracked && variant.available < 1) return;
@@ -417,15 +447,45 @@ export default function CafePos() {
           idempotencyKey: saleKey.current,
           paymentMethod,
           items: cart.map((line) => ({ variantId: line.variant.id, quantity: line.quantity })),
+          ...(nekudotMember
+            ? {
+                nekudotCredential,
+                nekudotRedeemAmount: (appliedNekudotCents / 100).toFixed(2),
+              }
+            : {}),
         }),
       });
-      setCart([]); saleKey.current = newSaleKey();
+      setCart([]);
+      setNekudotCredential("");
+      setNekudotMember(null);
+      setNekudotRedeemAmount("0");
+      saleKey.current = newSaleKey();
       setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
       setMessage({ tone: "success", text: `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} registrada.` });
       await printSale(result.sale);
       await loadData();
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo registrar la venta." });
+    } finally { setBusy(false); }
+  }
+
+  async function identifyNekudot(event?: React.FormEvent) {
+    event?.preventDefault();
+    if (!nekudotCredential.trim()) return;
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ member: NekudotMember }>(
+        `/api/cafe-pos/nekudot?credential=${encodeURIComponent(nekudotCredential.trim())}`,
+      );
+      setNekudotMember(result.member);
+      setNekudotRedeemAmount("0");
+      setMessage({
+        tone: "success",
+        text: `${result.member.displayName} identificado. Esta compra acumulará 5% en Nekudot.`,
+      });
+    } catch (error) {
+      setNekudotMember(null);
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo leer la membresía." });
     } finally { setBusy(false); }
   }
 
@@ -488,8 +548,29 @@ export default function CafePos() {
           <div className="cart-row-head"><div><strong>{line.product.title}</strong>{line.variant.title !== "Default Title" ? <small><br />{line.variant.title}</small> : null}</div><strong>{formatMoney(line.variant.priceCents * line.quantity)}</strong></div>
           <div className="qty-controls"><button onClick={() => quantity(line.variant.id, -1)}>−</button><strong>{line.quantity}</strong><button onClick={() => quantity(line.variant.id, 1)}>+</button><button className="remove" onClick={() => setCart((current) => current.filter((item) => item.variant.id !== line.variant.id))}>Quitar</button></div>
         </div>)}
-        <div className="totals"><div className="total-line grand"><span>Total</span><span>{formatMoney(totalCents)}</span></div><small>IVA incluido</small></div>
-        <div className="payment-grid"><button className="btn btn-success" disabled={busy || !shift || !cart.length} onClick={() => charge("CASH")}>Cobrar efectivo</button><button className="btn btn-primary" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}>Registrar terminal</button></div>
+        <section className="nekudot-card">
+          <div className="nekudot-heading"><strong>Nekudot Cohen&apos;s</strong><span>5% cashback</span></div>
+          {!nekudotMember ? <form className="nekudot-scan" onSubmit={identifyNekudot}>
+            <input
+              value={nekudotCredential}
+              onChange={(event) => setNekudotCredential(event.target.value)}
+              placeholder="Escanea RFID / QR o escribe el ID"
+              autoComplete="off"
+            />
+            <button className="btn btn-secondary" disabled={busy || nekudotCredential.trim().length < 4}>Identificar</button>
+          </form> : <div className="nekudot-member">
+            <div><strong>{nekudotMember.displayName}</strong><small>Saldo disponible: {formatMoney(nekudotMember.availableCents)}{nekudotMember.broker ? ` · Broker ${nekudotMember.broker.displayName}` : ""}</small></div>
+            <button className="btn btn-secondary" type="button" onClick={() => { setNekudotMember(null); setNekudotCredential(""); setNekudotRedeemAmount("0"); }}>Cambiar</button>
+            <label className="field">Usar en esta compra
+              <div className="nekudot-amount"><input type="number" min="0" max={(Math.min(totalCents, nekudotMember.availableCents) / 100).toFixed(2)} step="0.01" value={nekudotRedeemAmount} onChange={(event) => setNekudotRedeemAmount(event.target.value)} /><button className="btn btn-secondary" type="button" onClick={() => setNekudotRedeemAmount((Math.min(totalCents, nekudotMember.availableCents) / 100).toFixed(2))}>Máximo</button></div>
+            </label>
+          </div>}
+        </section>
+        <div className="totals">
+          {appliedNekudotCents ? <><div className="total-line"><span>Total artículos</span><span>{formatMoney(totalCents)}</span></div><div className="total-line nekudot-discount"><span>Nekudot</span><span>−{formatMoney(appliedNekudotCents)}</span></div></> : null}
+          <div className="total-line grand"><span>A pagar</span><span>{formatMoney(amountDueCents)}</span></div><small>IVA incluido</small>
+        </div>
+        <div className="payment-grid"><button className="btn btn-success" disabled={busy || !shift || !cart.length} onClick={() => charge("CASH")}>Cobrar {formatMoney(amountDueCents)} efectivo</button><button className="btn btn-primary" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}>Registrar {formatMoney(amountDueCents)} terminal</button></div>
       </aside>
     </div>
     {drawer ? <><button type="button" className="drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="drawer">

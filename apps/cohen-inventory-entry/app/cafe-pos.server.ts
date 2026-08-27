@@ -11,6 +11,13 @@ import {
   type CafePaymentMethod,
   type CafeReceiptItem,
 } from "./cafe-pos-domain";
+import {
+  cancelNekudotReservation,
+  lookupNekudotMember,
+  renewNekudotReservation,
+  reserveNekudot,
+} from "./nekudot.server";
+import { parseNekudotMoney } from "./nekudot-domain";
 
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
@@ -596,7 +603,53 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
   const { admin } = await adminContext();
   const location = await cafeLocation(admin);
   const resolved = await resolveCart(admin, location.id, raw.items);
-  const totalCents = resolved.reduce((sum, item) => sum + item.totalCents, 0);
+  const grossTotalCents = resolved.reduce((sum, item) => sum + item.totalCents, 0);
+  let nekudotMember = sale?.nekudotMemberId
+    ? await db.nekudotMember.findUnique({
+        where: { id: sale.nekudotMemberId },
+        include: { identities: true },
+      })
+    : null;
+  let nekudotRedemption = sale?.nekudotRedemptionId
+    ? await db.nekudotRedemption.findUnique({ where: { id: sale.nekudotRedemptionId } })
+    : null;
+
+  if (
+    sale
+    && nekudotRedemption
+    && sale.status !== "SYNCED"
+    && ["RESERVED", "EXPIRED"].includes(nekudotRedemption.status)
+  ) {
+    nekudotRedemption = await renewNekudotReservation(session!.shop, nekudotRedemption.id);
+  }
+
+  if (!sale && String(raw.nekudotCredential ?? "").trim()) {
+    nekudotMember = await lookupNekudotMember(session!.shop, raw.nekudotCredential);
+    const requestedAmount = String(raw.nekudotRedeemAmount ?? "").trim();
+    const requestedCents = requestedAmount && requestedAmount !== "0"
+      ? parseNekudotMoney(requestedAmount)
+      : 0;
+    if (requestedCents > grossTotalCents) {
+      throw new CafePosError(
+        "El canje de Nekudot no puede superar el total de la cuenta.",
+        409,
+        "NEKUDOT_EXCEEDS_TOTAL",
+      );
+    }
+    if (requestedCents) {
+      nekudotRedemption = await reserveNekudot({
+        shop: session!.shop,
+        rawToken: raw.nekudotCredential,
+        amount: requestedAmount,
+        cartTotalCents: grossTotalCents,
+        cartReference: idempotencyKey,
+        idempotencyKey: `cafe-redemption:${idempotencyKey}`,
+      });
+    }
+  }
+
+  const nekudotRedeemedCents = nekudotRedemption?.amountCents ?? 0;
+  const totalCents = grossTotalCents - nekudotRedeemedCents;
   const rateBasisPoints = taxRateBasisPoints();
   const taxCents = includedTaxCents(totalCents, rateBasisPoints);
   const receiptItems: Array<CafeReceiptItem & { variantId: string }> = resolved.map((item) => ({
@@ -609,21 +662,31 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
     totalCents: item.totalCents,
   }));
   if (!sale) {
-    sale = await db.cafeSale.create({
-      data: {
-        shop: session!.shop,
-        idempotencyKey,
-        staffId: session!.staffId,
-        shiftId: shift.id,
-        paymentMethod: method,
-        externalReference: String(raw.externalReference ?? "").trim().slice(0, 100) || null,
-        subtotalCents: totalCents - taxCents,
-        taxCents,
-        totalCents,
-        items: receiptItems,
-      },
-      include: { staff: { select: { name: true } } },
-    });
+    try {
+      sale = await db.cafeSale.create({
+        data: {
+          shop: session!.shop,
+          idempotencyKey,
+          staffId: session!.staffId,
+          shiftId: shift.id,
+          paymentMethod: method,
+          externalReference: String(raw.externalReference ?? "").trim().slice(0, 100) || null,
+          subtotalCents: totalCents - taxCents,
+          taxCents,
+          totalCents,
+          items: receiptItems,
+          nekudotMemberId: nekudotMember?.id ?? null,
+          nekudotRedemptionId: nekudotRedemption?.id ?? null,
+          nekudotRedeemedCents,
+        },
+        include: { staff: { select: { name: true } } },
+      });
+    } catch (error) {
+      if (nekudotRedemption) {
+        await cancelNekudotReservation(session!.shop, nekudotRedemption.id).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   try {
@@ -637,6 +700,14 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
     }
     const currencyCode = "MXN";
     const taxRate = rateBasisPoints / 10_000;
+    const currentShopIdentity = nekudotMember?.identities.find((identity) => identity.shop === session!.shop) ?? null;
+    const customAttributes = [
+      { key: "cafe_pos_sale_id", value: sale.id },
+      { key: "cafe_pos_staff", value: sale.staff.name },
+      { key: "cafe_pos_payment", value: paymentGateway(method) },
+      ...(nekudotMember ? [{ key: "nekudot_member_id", value: nekudotMember.id }] : []),
+      ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
+    ];
     const result = await graphql<{
       orderCreate: {
         order: { id: string; name: string } | null;
@@ -664,21 +735,34 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
               }]
             : [],
         })),
-        transactions: [{
-          kind: "SALE",
-          status: "SUCCESS",
-          gateway: paymentGateway(method),
-          locationId: location.id,
-          amountSet: { shopMoney: { amount: (totalCents / 100).toFixed(2), currencyCode } },
-        }],
+        ...(nekudotRedeemedCents ? {
+          discountCode: {
+            itemFixedDiscountCode: {
+              code: `NEKUDOT-${nekudotRedemption!.id.slice(-8).toUpperCase()}`,
+              amountSet: {
+                shopMoney: { amount: (nekudotRedeemedCents / 100).toFixed(2), currencyCode },
+              },
+            },
+          },
+        } : {}),
+        ...(currentShopIdentity
+          ? { customer: { toAssociate: { id: currentShopIdentity.shopifyCustomerId } } }
+          : {}),
+        ...(totalCents > 0
+          ? {
+              transactions: [{
+                kind: "SALE",
+                status: "SUCCESS",
+                gateway: paymentGateway(method),
+                locationId: location.id,
+                amountSet: { shopMoney: { amount: (totalCents / 100).toFixed(2), currencyCode } },
+              }],
+            }
+          : { financialStatus: "PAID" }),
         fulfillmentStatus: "FULFILLED",
         tags: ["cohens-cafe", "cafe-pos", `cafe-pos-${sale.id}`],
         note: `Venta de POS web. Empleado: ${sale.staff.name}. Turno: ${shift.id}.`,
-        customAttributes: [
-          { key: "cafe_pos_sale_id", value: sale.id },
-          { key: "cafe_pos_staff", value: sale.staff.name },
-          { key: "cafe_pos_payment", value: paymentGateway(method) },
-        ],
+        customAttributes,
         processedAt: new Date().toISOString(),
       },
       options: { inventoryBehaviour: "DECREMENT_OBEYING_POLICY", sendReceipt: false, sendFulfillmentReceipt: false },

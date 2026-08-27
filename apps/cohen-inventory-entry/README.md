@@ -1,9 +1,23 @@
 # Cohens Operations · aplicación Shopify
 
-Aplicación Shopify modular con dos apartados activos. **Inventario y entradas**
+Aplicación Shopify modular con tres apartados activos. **Inventario y entradas**
 registra mercancía desde PC o Shopify POS mediante código de barras.
 **Analíticos de utilidad** sincroniza ventas y calcula utilidad bruta estimada
-con el “Costo por artículo” vigente.
+con el “Costo por artículo” vigente. **Nekudot Cohen's** comparte una wallet
+entre tienda y cafetería: acredita 5% al cliente, separa 5% para su broker y
+permite canjear el saldo en compras posteriores mediante RFID o QR.
+
+## Nekudot Cohen's
+
+La ruta embebida `/app/cashback` administra miembros, tarjetas/QR, brokers,
+saldos y el libro mayor. La extensión `Nekudot Cohen's` funciona dentro de
+Shopify POS; la POS web de la cafetería ofrece el mismo lector y canje.
+
+El pedido pagado es la fuente de verdad. Cada compra acredita 5% sobre su venta
+neta; una devolución revierte proporcionalmente cashback, comisión y Nekudot
+canjeados. El ID original nunca se guarda: se persiste únicamente su HMAC. Para
+compartir saldo entre dos tiendas Shopify, ambas instalaciones deben apuntar al
+mismo servicio y a la misma base de datos de Cohens Operations.
 
 ## Objetivo 2 · Analíticos de utilidad
 
@@ -60,6 +74,9 @@ bitácora y corrección.
 ## Componentes
 
 - `app/routes/app.profit.tsx`: panel de utilidad bruta.
+- `app/routes/app.cashback.tsx`: administración de Nekudot y brokers.
+- `app/nekudot.server.ts`: wallet central, reserva, canje y conciliación.
+- `extensions/nekudot-pos`: mosaico y modal de Nekudot para Shopify POS.
 - `app/sales-sync.server.ts`: actualización idempotente por webhook.
 - `scripts/sync-sales-from-shopify.mjs`: importación histórica completa.
 - `app/routes/webhooks.sales-sync.tsx`: pedidos y reembolsos nuevos.
@@ -104,7 +121,9 @@ read_inventory
 write_inventory
 read_locations
 read_orders
+write_orders
 read_all_orders
+read_customers
 ```
 
 El usuario que opera POS también necesita permiso para aplicar cambios de
@@ -153,7 +172,7 @@ servidor temporal para ella. Antes de instalar:
 1. publicar el backend en una URL HTTPS estable;
 2. usar una base de datos de producción con respaldos;
 3. configurar `SHOPIFY_APP_URL`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET` y
-   `SCOPES`;
+   `SCOPES`, además de un `NEKUDOT_TOKEN_SECRET` aleatorio;
 4. cambiar `application_url` y `redirect_urls` en `shopify.app.toml`;
 5. aplicar migraciones;
 6. liberar la versión de la extensión;

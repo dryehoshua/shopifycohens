@@ -26,6 +26,7 @@ export default function App() {
         </a>
         <a href="/app/receive">Inventario · Registrar entrada</a>
         <a href="/app/profit">Analíticos · Utilidad</a>
+        <a href="/app/cashback">Clientes · Nekudot</a>
         <a href="/app/cafe">Cohen&apos;s Cafe</a>
         {cafeDedicated ? <a href="/app/cafe-pos">Cafetería · POS web</a> : null}
       </ui-nav-menu>

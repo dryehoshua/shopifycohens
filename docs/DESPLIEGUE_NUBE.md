@@ -48,6 +48,7 @@ Los valores se cargarán directamente en Railway; no se copiarán al repositorio
 - `COHENS_SOURCE_SHOP`
 - `COHENS_SOURCE_SHOP_NAME`
 - `SHOPIFY_ADMIN_APP_URL`
+- `NEKUDOT_TOKEN_SECRET`
 - `NODE_ENV=production`
 
 Railway proporciona `PORT` automáticamente.
