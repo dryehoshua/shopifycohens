@@ -30,7 +30,6 @@ outputs/
 *.xls
 *.pdf
 *.zip
-!apps/cohen-inventory-entry/public/downloads/cohens-nfc-macos.zip
 *.ndjson
 
 # Informes internos con cifras reales. La versión pública está en docs/.

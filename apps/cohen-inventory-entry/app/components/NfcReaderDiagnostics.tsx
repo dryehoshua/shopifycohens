@@ -27,7 +27,7 @@ type Props = {
 };
 
 const REQUIRED_READS = 3;
-const MAC_INSTALLER_URL = "/downloads/cohens-nfc-macos.zip";
+const MAC_INSTALLER_URL = "/downloads/cohens-nfc-macos.tar.gz";
 const ACS_MAC_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/13549/acsccid-macosx-bin-1.1.11.1-20240826.zip";
 const ACS_WINDOWS_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/9840/ACS-Unified-MSI-4280.rar";
 const ACS_LINUX_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/14214/acsccid-linux-bin-1.1.11-20240328.zip";
