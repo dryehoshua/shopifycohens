@@ -304,10 +304,19 @@ export default function RetailPos() {
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [suspendedSales, setSuspendedSales] = useState<SuspendedSale[]>([]);
   const [suspendedLoaded, setSuspendedLoaded] = useState(false);
+  const [cashCheckoutOpen, setCashCheckoutOpen] = useState(false);
+  const [cashReceivedInput, setCashReceivedInput] = useState("");
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
   const searchRef = useRef<HTMLInputElement>(null);
+  const cashInputRef = useRef<HTMLInputElement>(null);
   const catalogRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!cashCheckoutOpen) return;
+    const frame = window.requestAnimationFrame(() => cashInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [cashCheckoutOpen]);
 
   const loadCatalog = useCallback(async () => {
     const requestId = catalogRequestRef.current + 1;
@@ -608,14 +617,14 @@ export default function RetailPos() {
     finally { setBusy(false); }
   }
 
-  async function charge(paymentMethod: "CASH" | "EXTERNAL_CARD" | "SPLIT") {
-    if (!shift || !cart.length) return;
+  async function charge(paymentMethod: "CASH" | "EXTERNAL_CARD" | "SPLIT", receivedCash?: string) {
+    if (!shift || !cart.length) return false;
     let cashPaid: string | undefined;
     let cashReceived: string | undefined;
     let externalReference: string | undefined;
     if (paymentMethod === "CASH" && amountDueCents > 0) {
-      const received = window.prompt(`Total ${formatMoney(amountDueCents)}. ¿Cuánto efectivo recibiste?`, (amountDueCents / 100).toFixed(2));
-      if (received === null) return; cashReceived = received;
+      if (receivedCash === undefined) return false;
+      cashReceived = receivedCash;
     }
     if (paymentMethod === "SPLIT") {
       const cash = window.prompt(`Total ${formatMoney(amountDueCents)}. ¿Cuánto se pagará en efectivo?`, (amountDueCents / 200).toFixed(2));
@@ -650,8 +659,22 @@ export default function RetailPos() {
       clearCurrentSale(); setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
       setMessage({ tone: "success", text: `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} registrada en Shopify${result.sale.changeCents ? `. Cambio: ${formatMoney(result.sale.changeCents)}` : ""}.` });
       await printSale(result.sale); await loadData();
-    } catch (error) { setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo cobrar." }); }
+      return true;
+    } catch (error) { setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo cobrar." }); return false; }
     finally { setBusy(false); }
+  }
+
+  function openCashCheckout() {
+    setCashReceivedInput("");
+    setCashCheckoutOpen(true);
+  }
+
+  async function submitCashCheckout(event: React.FormEvent) {
+    event.preventDefault();
+    const receivedCents = moneyInputCents(cashReceivedInput);
+    if (receivedCents < amountDueCents) return;
+    const completed = await charge("CASH", (receivedCents / 100).toFixed(2));
+    if (completed) setCashCheckoutOpen(false);
   }
 
   async function retrySale(sale: Sale) {
@@ -790,9 +813,30 @@ export default function RetailPos() {
           <div><span>{itemCount} artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>Nekudot devengados</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
           <div className="grand"><span>A pagar</span><span>{formatMoney(amountDueCents)}</span></div><small>Pedido, cliente e inventario se registran en Shopify</small>
         </div>
-        <div className="retail-payment-grid"><button className="cash" disabled={busy || !shift || !cart.length} onClick={() => charge("CASH")}><span>EFECTIVO</span><b>{formatMoney(amountDueCents)}</b></button><button className="card" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}><span>TARJETA</span><b>Terminal</b></button><button className="split" disabled={busy || !shift || !cart.length || amountDueCents <= 1} onClick={() => charge("SPLIT")}><span>PAGO</span><b>Mixto</b></button></div>
+        <div className="retail-payment-grid"><button className="cash" disabled={busy || !shift || !cart.length} onClick={openCashCheckout}><span>EFECTIVO</span><b>{formatMoney(amountDueCents)}</b></button><button className="card" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}><span>TARJETA</span><b>Terminal</b></button><button className="split" disabled={busy || !shift || !cart.length || amountDueCents <= 1} onClick={() => charge("SPLIT")}><span>PAGO</span><b>Mixto</b></button></div>
       </aside>
     </div>
+    {cashCheckoutOpen ? <div className="retail-cash-backdrop">
+      <button type="button" className="retail-cash-dismiss" aria-label="Cerrar cobro en efectivo" disabled={busy} onClick={() => setCashCheckoutOpen(false)} />
+      <section className="retail-cash-modal" role="dialog" aria-modal="true" aria-labelledby="retail-cash-title">
+        <button type="button" className="retail-cash-close" aria-label="Cerrar cobro en efectivo" disabled={busy} onClick={() => setCashCheckoutOpen(false)}>×</button>
+        <span className="retail-kicker">COBRO EN EFECTIVO</span>
+        <h2 id="retail-cash-title">¿Con cuánto paga?</h2>
+        <div className="retail-cash-total"><span>Total de la venta</span><strong>{formatMoney(amountDueCents)}</strong></div>
+        <form onSubmit={submitCashCheckout}>
+          <label htmlFor="retail-cash-received">Efectivo recibido</label>
+          <div className="retail-cash-input"><span>$</span><input ref={cashInputRef} id="retail-cash-received" inputMode="decimal" type="number" min={(amountDueCents / 100).toFixed(2)} step="0.01" value={cashReceivedInput} onChange={(event) => setCashReceivedInput(event.target.value)} placeholder={(amountDueCents / 100).toFixed(2)} /></div>
+          <div className="retail-cash-bills" aria-label="Billetes sugeridos">
+            {[amountDueCents, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000]
+              .filter((value, index, values) => value >= amountDueCents && values.indexOf(value) === index)
+              .sort((left, right) => left - right)
+              .map((value) => <button type="button" key={value} onClick={() => setCashReceivedInput((value / 100).toFixed(2))}>{value === amountDueCents ? "Pago exacto" : formatMoney(value)}</button>)}
+          </div>
+          {moneyInputCents(cashReceivedInput) >= amountDueCents ? <div className="retail-cash-change ready"><span>Cambio a entregar</span><strong>{formatMoney(moneyInputCents(cashReceivedInput) - amountDueCents)}</strong></div> : <div className="retail-cash-change"><span>{cashReceivedInput ? "Falta para cubrir el total" : "Selecciona un billete o escribe el importe"}</span><strong>{cashReceivedInput ? formatMoney(amountDueCents - moneyInputCents(cashReceivedInput)) : "—"}</strong></div>}
+          <div className="retail-cash-actions"><button type="button" disabled={busy} onClick={() => setCashCheckoutOpen(false)}>Cancelar</button><button type="submit" className="primary" disabled={busy || moneyInputCents(cashReceivedInput) < amountDueCents}>{busy ? "Registrando…" : `Cobrar ${formatMoney(amountDueCents)}`}</button></div>
+        </form>
+      </section>
+    </div> : null}
     {drawer ? <><button type="button" className="retail-drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="retail-drawer"><button className="retail-button secondary" onClick={() => setDrawer(null)}>Cerrar</button>
       {drawer === "catalog" ? <><span className="retail-kicker">CATÁLOGO SHOPIFY</span><h2>Buscar producto</h2>
         <div className="retail-catalog-status"><div><strong>{catalogMeta?.productCount ?? products.length} productos · {catalogMeta?.variantCount ?? products.reduce((sum, product) => sum + product.variants.length, 0)} variantes</strong><small>Ubicación: {catalogMeta?.location.name ?? "Plaza Victoria"} · incluye productos sin existencia</small></div><button type="button" disabled={catalogRefreshing} onClick={() => { void loadCatalog().catch((error) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar Shopify." })); }}>{catalogRefreshing ? "Consultando…" : "Actualizar Shopify"}</button></div>

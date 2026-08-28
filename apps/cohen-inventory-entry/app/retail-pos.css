@@ -131,6 +131,31 @@ button { touch-action: manipulation; }
 .retail-payment-grid .card { background: #245b79; }
 .retail-payment-grid .split { color: #263e35; background: #d9dfdb; }
 
+.retail-cash-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; background: rgb(8 27 20 / 62%); backdrop-filter: blur(3px); }
+.retail-cash-dismiss { position: absolute; inset: 0; border: 0; background: transparent; cursor: default; }
+.retail-cash-modal { position: relative; z-index: 1; width: min(480px, 100%); padding: 28px; border: 1px solid #d7dfda; border-radius: 22px; color: #183b2e; background: #fffefa; box-shadow: 0 30px 90px rgb(4 24 16 / 42%); }
+.retail-cash-modal h2 { margin: 5px 0 20px; font: 700 30px Georgia, serif; }
+.retail-cash-close { position: absolute; top: 15px; right: 15px; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; color: #52665d; background: #edf1ee; font-size: 24px; cursor: pointer; }
+.retail-cash-total { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; padding: 15px 17px; border-radius: 13px; color: white; background: linear-gradient(135deg, #1d5d43, #2d7c5c); }
+.retail-cash-total span { font-size: 12px; font-weight: 800; }
+.retail-cash-total strong { font-size: 27px; }
+.retail-cash-modal form { display: grid; gap: 13px; }
+.retail-cash-modal form > label { color: #52665d; font-size: 12px; font-weight: 900; }
+.retail-cash-input { display: grid; grid-template-columns: auto 1fr; align-items: center; border: 2px solid #2a7457; border-radius: 13px; background: white; overflow: hidden; }
+.retail-cash-input span { padding-left: 15px; color: #2b6d53; font-size: 25px; font-weight: 900; }
+.retail-cash-input input { min-width: 0; width: 100%; border: 0; padding: 13px 15px 13px 8px; outline: 0; color: #173a2d; background: transparent; font-size: 27px; font-weight: 900; }
+.retail-cash-bills { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.retail-cash-bills button { min-height: 43px; border: 1px solid #cad8d1; border-radius: 10px; color: #245741; background: #f4f8f5; font-size: 11px; font-weight: 900; cursor: pointer; }
+.retail-cash-bills button:first-child { border-color: #c7a95f; color: #6d5418; background: #fff6d9; }
+.retail-cash-change { display: flex; align-items: center; justify-content: space-between; gap: 15px; min-height: 69px; padding: 14px 16px; border-radius: 13px; color: #785f29; background: #fff4d8; }
+.retail-cash-change.ready { color: #165b3d; background: #e2f4e9; }
+.retail-cash-change span { font-size: 12px; font-weight: 800; }
+.retail-cash-change strong { font-size: 25px; }
+.retail-cash-actions { display: grid; grid-template-columns: 1fr 1.5fr; gap: 9px; margin-top: 3px; }
+.retail-cash-actions button { min-height: 48px; border: 0; border-radius: 11px; color: #36564a; background: #e8eeea; font-weight: 900; cursor: pointer; }
+.retail-cash-actions button.primary { color: white; background: #237153; }
+.retail-cash-actions button:disabled { cursor: not-allowed; opacity: .5; }
+
 .retail-drawer-backdrop { position: fixed; inset: 64px 0 0; z-index: 29; border: 0; background: rgb(10 30 23 / 34%); cursor: pointer; }
 .retail-drawer { position: fixed; inset: 64px 0 0 auto; z-index: 30; width: min(620px, 100%); overflow: auto; padding: 22px; background: white; box-shadow: -10px 0 35px rgb(9 31 23 / 22%); }
 .retail-drawer > h2 { margin: 5px 0 18px; font-family: Georgia, serif; font-size: 27px; }
@@ -245,4 +270,6 @@ button { touch-action: manipulation; }
   .retail-adjustments { grid-template-columns: 1fr; }
   .retail-product-grid { grid-template-columns: 1fr; }
   .retail-catalog-status { align-items: stretch; flex-direction: column; }
+  .retail-cash-modal { padding: 22px 17px; }
+  .retail-cash-bills { grid-template-columns: repeat(3, 1fr); }
 }
