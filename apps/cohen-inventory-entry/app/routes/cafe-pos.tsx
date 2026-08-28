@@ -10,7 +10,9 @@ import {
 } from "../cafe-pos.server";
 import { formatMoney, receiptColumns, wrapReceiptText, type CafeReceiptItem } from "../cafe-pos-domain";
 import { NfcBridgeReader } from "../components/NfcBridgeReader";
+import { NfcReaderDiagnostics } from "../components/NfcReaderDiagnostics";
 import "../nfc-bridge.css";
+import "../nfc-reader-diagnostics.css";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: stylesheet },
@@ -226,7 +228,7 @@ export default function CafePos() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: string; text: string } | null>(null);
-  const [drawer, setDrawer] = useState<"orders" | "shift" | "staff" | null>(null);
+  const [drawer, setDrawer] = useState<"orders" | "shift" | "staff" | "reader" | null>(null);
   const [openingCash, setOpeningCash] = useState("0");
   const [closingCash, setClosingCash] = useState("");
   const [terminalCounted, setTerminalCounted] = useState("");
@@ -529,6 +531,7 @@ export default function CafePos() {
       <div className="cafe-brand"><div className="cafe-brand-mark">C</div><div><h1>Cohen&apos;s Cafe</h1><small>Bienvenido, {initial.staff.name}{initial.staff.role === "MANAGER" ? " · Gerente" : ""} · {shift ? "Turno abierto" : "Sin turno"}</small></div></div>
       <div className="top-actions">
         <button className="btn btn-dark" onClick={connectPrinter}>🖨️ <span className="label">{printerName || "Conectar impresora"}</span></button>
+        <button className="btn btn-dark" onClick={() => setDrawer("reader")}>◉ <span className="label">Lector NFC</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("orders")}>🧾 <span className="label">Pedidos</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("shift")}>💵 <span className="label">Turno</span></button>
         {initial.staff.role === "MANAGER" ? <button className="btn btn-dark" disabled={busy} onClick={openStaff}>👥 <span className="label">Empleados</span></button> : null}
@@ -574,7 +577,7 @@ export default function CafePos() {
               <div className="nekudot-amount"><input type="number" min="0" max={(Math.min(totalCents, nekudotMember.availableCents) / 100).toFixed(2)} step="0.01" value={nekudotRedeemAmount} onChange={(event) => setNekudotRedeemAmount(event.target.value)} /><button className="btn btn-secondary" type="button" onClick={() => setNekudotRedeemAmount((Math.min(totalCents, nekudotMember.availableCents) / 100).toFixed(2))}>Máximo</button></div>
             </label>
           </div>}
-          {!nekudotMember ? <NfcBridgeReader compact onCredential={(credential) => { void identifyNekudotCredential(credential); }} /> : null}
+          {!nekudotMember && drawer !== "reader" ? <NfcBridgeReader compact onCredential={(credential) => { void identifyNekudotCredential(credential); }} /> : null}
         </section>
         <div className="totals">
           {appliedNekudotCents ? <><div className="total-line"><span>Total artículos</span><span>{formatMoney(totalCents)}</span></div><div className="total-line nekudot-discount"><span>Nekudot</span><span>−{formatMoney(appliedNekudotCents)}</span></div></> : null}
@@ -598,6 +601,7 @@ export default function CafePos() {
         </div>
       </div>)}</> : null}
       {drawer === "shift" ? <><h2>Turno de caja</h2>{!shift ? <><p>No hay turno abierto.</p><label className="field">Fondo inicial<input type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label><button className="btn btn-success btn-wide" disabled={busy} onClick={openShift}>Abrir turno</button></> : <><div className="status status-info">Abierto por {shift.staff.name} el {new Date(shift.openedAt).toLocaleString("es-MX")}. Fondo: {formatMoney(shift.openingCashCents)}</div><label className="field">Efectivo contado<input type="number" min="0" step="0.01" value={closingCash} onChange={(event) => setClosingCash(event.target.value)} /></label><label className="field">Total de terminal<input type="number" min="0" step="0.01" value={terminalCounted} onChange={(event) => setTerminalCounted(event.target.value)} /></label><label className="field">Notas<textarea value={closeNotes} onChange={(event) => setCloseNotes(event.target.value)} /></label><button className="btn btn-danger btn-wide" disabled={busy || closingCash === "" || terminalCounted === ""} onClick={closeShift}>Cerrar y conciliar turno</button></>}</> : null}
+      {drawer === "reader" ? <><h2>Prueba del lector NFC</h2><NfcReaderDiagnostics lookupEndpoint="/api/cafe-pos/nekudot" locationLabel="Cafetería" /></> : null}
       {drawer === "staff" ? <><h2>Empleados</h2>
         <div className="status status-info">Solo el gerente puede crear, cambiar PINes o desactivar usuarios.</div>
         <p>Para cambiar un PIN, escribe exactamente el mismo primer nombre y asigna el PIN nuevo.</p>

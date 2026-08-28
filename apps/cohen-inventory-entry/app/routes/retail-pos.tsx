@@ -10,7 +10,9 @@ import {
 } from "../retail-pos.server";
 import { formatMoney, receiptColumns, wrapReceiptText, type CafeReceiptItem } from "../cafe-pos-domain";
 import { NfcBridgeReader } from "../components/NfcBridgeReader";
+import { NfcReaderDiagnostics } from "../components/NfcReaderDiagnostics";
 import "../nfc-bridge.css";
+import "../nfc-reader-diagnostics.css";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: stylesheet },
@@ -136,7 +138,7 @@ type SuspendedSale = {
   discountAmount: string;
   nekudotAmount: string;
 };
-type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | null;
+type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | "reader" | null;
 
 type UsbEndpoint = { direction: string; endpointNumber: number };
 type UsbAlternate = { alternateSetting: number; endpoints: UsbEndpoint[] };
@@ -684,6 +686,7 @@ export default function RetailPos() {
         <button className="retail-button dark" onClick={connectPrinter}>Impresora <span>{printerName ? "✓" : ""}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("catalog")}>Catálogo</button>
         <button className="retail-button dark" onClick={() => setDrawer("customers")}>Clientes</button>
+        <button className="retail-button dark" onClick={() => setDrawer("reader")}>Lector NFC</button>
         <button className="retail-button dark" onClick={() => setDrawer("suspended")}>En espera <span className="retail-counter">{suspendedSales.length}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("orders")}>Pedidos</button>
         <button className="retail-button dark" onClick={() => setDrawer("shift")}>Caja</button>
@@ -773,6 +776,7 @@ export default function RetailPos() {
         </section> : null}
         {customer ? <button className="retail-button danger wide" onClick={() => { setCustomer(null); setMember(null); setCredential(""); setDrawer(null); }}>Continuar sin cliente</button> : null}
       </> : null}
+      {drawer === "reader" ? <><span className="retail-kicker">HARDWARE Y CONTROL DE CALIDAD</span><h2>Prueba del lector</h2><NfcReaderDiagnostics lookupEndpoint="/api/retail-pos/nekudot" locationLabel="Tienda" /></> : null}
       {drawer === "orders" ? <><span className="retail-kicker">SHOPIFY</span><h2>Ventas recientes</h2>{sales.map((sale) => <article className="retail-sale" key={sale.id}><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><b>{formatMoney(sale.totalCents)}</b></div><small>{new Date(sale.createdAt).toLocaleString("es-MX")} · {sale.staff.name}{sale.customerName ? ` · ${sale.customerName}` : ""}</small><span className={`retail-badge ${sale.status.toLowerCase()}`}>{sale.status === "SYNCED" ? "Shopify sincronizado" : sale.status === "REFUNDED" ? "Reembolsado" : "Pendiente"}</span>{sale.errorMessage ? <div className="retail-alert warning">{sale.errorMessage}</div> : null}<div className="retail-sale-actions"><button onClick={() => printSale(sale)}>Reimprimir</button>{sale.status === "SYNCED" ? <button className="danger" disabled={busy} onClick={() => refundSale(sale)}>Reembolsar y reponer</button> : null}{sale.status === "PENDING_SYNC" ? <button disabled={busy} onClick={() => retrySale(sale)}>Reintentar</button> : null}</div></article>)}</> : null}
       {drawer === "shift" ? <><span className="retail-kicker">CONTROL DE CAJA</span><h2>Turno de tienda</h2>{!shift ? <><p>No hay una caja abierta.</p><label className="retail-field">Fondo inicial<input type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label><button className="retail-button primary wide" disabled={busy} onClick={openShift}>Abrir caja</button></> : <><div className="retail-selected"><strong>Abierta por {shift.staff.name}</strong><span>{new Date(shift.openedAt).toLocaleString("es-MX")} · Fondo {formatMoney(shift.openingCashCents)}</span></div><label className="retail-field">Efectivo contado<input type="number" min="0" step="0.01" value={closingCash} onChange={(event) => setClosingCash(event.target.value)} /></label><label className="retail-field">Total de terminal<input type="number" min="0" step="0.01" value={terminalCounted} onChange={(event) => setTerminalCounted(event.target.value)} /></label><label className="retail-field">Notas<textarea value={closeNotes} onChange={(event) => setCloseNotes(event.target.value)} /></label><button className="retail-button danger wide" disabled={busy || closingCash === "" || terminalCounted === ""} onClick={closeShift}>Cerrar y conciliar</button></>}</> : null}
       {drawer === "staff" ? <><span className="retail-kicker">SEGURIDAD</span><h2>Equipo de tienda</h2><form onSubmit={saveStaff}><label className="retail-field">Nombre<input value={staffName} onChange={(event) => setStaffName(event.target.value)} required /></label><label className="retail-field">PIN<input value={staffPin} onChange={(event) => setStaffPin(event.target.value.replace(/\D/g, "").slice(0, 8))} type="password" inputMode="numeric" required /></label><button className="retail-button primary wide" disabled={busy || staffPin.length < 4}>Guardar cajero</button></form><div className="retail-staff-list">{staffMembers.map((item) => <div key={item.id}><span><strong>{item.name}</strong><small>{item.role === "MANAGER" ? "Gerente" : "Cajero"} · {item.active ? "Activo" : "Desactivado"}</small></span><button disabled={item.role === "MANAGER" || busy} onClick={() => toggleStaff(item)}>{item.active ? "Desactivar" : "Activar"}</button></div>)}</div></> : null}
