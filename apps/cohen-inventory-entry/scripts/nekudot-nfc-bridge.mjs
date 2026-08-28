@@ -209,7 +209,9 @@ const server = createServer((request, response) => {
     return;
   }
   if (request.method === "GET" && url.pathname === "/events") {
-    lastEventPollAt = Date.now();
+    // The diagnostic page is same-origin and should not suppress the native
+    // fallback used by Shopify's embedded iframe.
+    if (origin) lastEventPollAt = Date.now();
     const after = Number(url.searchParams.get("after") || 0);
     if (state.lastEvent && state.lastEvent.sequence > after) {
       json(request, response, 200, { ok: true, ...state.lastEvent });
