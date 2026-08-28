@@ -10,10 +10,13 @@ import {
   lookupNekudotMember,
   nekudotDashboard,
   NekudotError,
+  replaceNekudotCredential,
   searchShopifyCustomers,
 } from "../nekudot.server";
 import { authenticate } from "../shopify.server";
+import { NfcBridgeReader } from "../components/NfcBridgeReader";
 import "../cashback.css";
+import "../nfc-bridge.css";
 
 function field(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -95,6 +98,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const member = await lookupNekudotMember(session.shop, rawToken);
       return Response.json({ ok: true, intent, message: `Tarjeta vinculada a ${member.displayName}.`, member } satisfies ActionData);
     }
+    if (intent === "replace_card") {
+      const rawToken = field(formData, "credential");
+      await replaceNekudotCredential({
+        admin,
+        shop: session.shop,
+        customerId: field(formData, "customerId"),
+        rawToken,
+        kind: field(formData, "kind"),
+        label: field(formData, "label"),
+        identityVerified: field(formData, "identityVerified"),
+      });
+      const member = await lookupNekudotMember(session.shop, rawToken);
+      return Response.json({
+        ok: true,
+        intent,
+        message: `Tarjeta anterior desactivada. ${member.displayName} conserva todo su saldo en la nueva tarjeta.`,
+        member,
+      } satisfies ActionData);
+    }
     if (intent === "create_broker") {
       const broker = await createNekudotBroker({
         code: field(formData, "code"),
@@ -137,8 +159,11 @@ export default function NekudotPage() {
   const result = useActionData<typeof action>() as ActionData | undefined;
   const navigation = useNavigation();
   const scannerRef = useRef<HTMLInputElement>(null);
+  const scannerFormRef = useRef<HTMLFormElement>(null);
   const [tab, setTab] = useState<Tab>(data.search ? "customers" : "overview");
   const [selectedCustomerId, setSelectedCustomerId] = useState(data.customers[0]?.id ?? "");
+  const [scanCredential, setScanCredential] = useState("");
+  const [bindCredential, setBindCredential] = useState("");
   const pendingIntent = String(navigation.formData?.get("intent") ?? "");
   const member = result?.ok ? result.member : undefined;
   const selectedCustomer = data.customers.find((customer) => customer.id === selectedCustomerId);
@@ -146,7 +171,7 @@ export default function NekudotPage() {
   useEffect(() => {
     if (!result) return;
     if (result.intent === "create_broker") setTab("brokers");
-    else if (result.intent === "bind") setTab("customers");
+    else if (result.intent === "bind" || result.intent === "replace_card") setTab("customers");
     else setTab("scan");
   }, [result]);
   useEffect(() => { if (tab === "scan") scannerRef.current?.focus(); }, [tab]);
@@ -176,19 +201,19 @@ export default function NekudotPage() {
           <article className="cb-metric blue"><span>Comisiones</span><strong>{formatNekudot(data.metrics.commissionBalanceCents)}</strong><small>saldo por conciliar</small></article>
         </section>
         <section className="cb-overview-grid">
-          <div className="cb-panel cb-how"><span className="cb-kicker">REGLA COMERCIAL</span><h2>5 + 5, siempre auditable</h2><ol><li><span>1</span><div><strong>Identifica</strong><p>RFID o QR localiza al miembro en ambas tiendas.</p></div></li><li><span>2</span><div><strong>Acredita</strong><p>5% neto llega a sus Nekudot al pagar.</p></div></li><li><span>3</span><div><strong>Comisiona</strong><p>Otro 5% se separa para el broker asignado.</p></div></li></ol><button className="cb-primary" type="button" onClick={() => setTab("scan")}>Abrir lector</button></div>
+          <div className="cb-panel cb-how"><span className="cb-kicker">DINÁMICA DE CAJA</span><h2>Pregunta, identifica y acredita</h2><ol><li><span>1</span><div><strong>Pregunta</strong><p>Al terminar: “¿Tiene tarjeta Cohen&apos;s?”.</p></div></li><li><span>2</span><div><strong>Escanea</strong><p>RFID o QR localiza su perfil, no su saldo.</p></div></li><li><span>3</span><div><strong>Acredita</strong><p>El pedido pagado carga 5% al cliente y 5% al broker.</p></div></li></ol><button className="cb-primary" type="button" onClick={() => setTab("scan")}>Abrir lector</button></div>
           <div className="cb-panel cb-status"><span className="cb-kicker">COBERTURA</span><h2>Tienda + cafetería</h2><div className="cb-status-line"><span className="ok">✓</span><div><strong>Wallet central</strong><small>Un saldo en las dos tiendas</small></div></div><div className="cb-status-line"><span className="ok">✓</span><div><strong>Compras y devoluciones</strong><small>Reconciliación automática</small></div></div><div className="cb-status-line"><span className="ok">✓</span><div><strong>Canje protegido</strong><small>Reserva hasta confirmar el pedido</small></div></div></div>
         </section>
         <Ledger entries={data.ledger.slice(0, 8)} />
       </div> : null}
 
       {tab === "scan" ? <section className="cb-panel cb-scan-layout">
-        <div className="cb-scan-card"><div className="cb-section-heading"><span className="cb-icon"><Icon name="scan" /></span><div><h2>Leer tarjeta o QR</h2><p>El ID es el mismo en tienda y cafetería.</p></div></div><Form method="post" className="cb-scan-form"><input type="hidden" name="intent" value="lookup" /><label htmlFor="nekudot-credential">ID Nekudot</label><div className="cb-input-action"><input id="nekudot-credential" ref={scannerRef} name="credential" required minLength={4} maxLength={128} autoComplete="off" placeholder="Esperando lectura…" /><button className="cb-primary" type="submit" disabled={pendingIntent === "lookup"}>{pendingIntent === "lookup" ? "Buscando…" : "Identificar"}</button></div></Form><div className="cb-reader-visual" aria-hidden="true"><div className="cb-card-chip"><i /><i /><i /><i /></div><div className="cb-radio">)))</div><div className="cb-qr-grid">{Array.from({ length: 25 }).map((_, index) => <i key={index} />)}</div></div></div>
+        <div className="cb-scan-card"><div className="cb-section-heading"><span className="cb-icon"><Icon name="scan" /></span><div><h2>Leer tarjeta o QR</h2><p>El ID es el mismo en tienda y cafetería.</p></div></div><Form ref={scannerFormRef} method="post" className="cb-scan-form"><input type="hidden" name="intent" value="lookup" /><label htmlFor="nekudot-credential">ID Nekudot</label><div className="cb-input-action"><input id="nekudot-credential" ref={scannerRef} name="credential" value={scanCredential} onChange={(event) => setScanCredential(event.target.value)} required minLength={4} maxLength={128} autoComplete="off" placeholder="Esperando lectura…" /><button className="cb-primary" type="submit" disabled={pendingIntent === "lookup"}>{pendingIntent === "lookup" ? "Buscando…" : "Identificar"}</button></div></Form><NfcBridgeReader onCredential={(credential) => { setScanCredential(credential); window.requestAnimationFrame(() => scannerFormRef.current?.requestSubmit()); }} /><div className="cb-reader-visual" aria-hidden="true"><div className="cb-card-chip"><i /><i /><i /><i /></div><div className="cb-radio">)))</div><div className="cb-qr-grid">{Array.from({ length: 25 }).map((_, index) => <i key={index} />)}</div></div></div>
         {member ? <div className="cb-account-card"><div className="cb-account-head"><span className="cb-avatar large">{member.displayName.slice(0, 2).toUpperCase()}</span><div><span className="cb-kicker">MIEMBRO ENCONTRADO</span><h2>{member.displayName}</h2><p>{member.email ?? "Sin correo"}</p></div><span className="cb-live">ACTIVA</span></div><div className="cb-balance-box"><span>Disponible para nuevas compras</span><strong>{formatNekudot(member.availableCents)}</strong><small>{formatNekudot(member.reservedCents)} reservado</small></div><div className="cb-account-stats"><span><small>Ganado</small><strong>{formatNekudot(member.lifetimeEarnedCents)}</strong></span><span><small>Canjeado</small><strong>{formatNekudot(member.lifetimeRedeemedCents)}</strong></span><span><small>Broker</small><strong>{member.broker?.displayName ?? "Sin broker"}</strong></span></div><div className="cb-order-note"><span>i</span><p>En Shopify POS usa el mosaico “Nekudot Cohen&apos;s” para asignar este cliente al carrito y aplicar su saldo.</p></div></div> : <div className="cb-empty-account"><span><Icon name="users" /></span><h3>Lista para leer</h3><p>La membresía mostrará saldo, broker e identidades de ambas tiendas.</p></div>}
       </section> : null}
 
       {tab === "customers" ? <section className="cb-panel"><div className="cb-panel-title"><div><span className="cb-kicker">MIEMBROS</span><h2>Vincular cliente de Shopify</h2><p>Si la tarjeta ya existe, añadiremos esta tienda al mismo wallet.</p></div><span className="cb-count">5% cashback</span></div><Form method="get" className="cb-search"><span>⌕</span><input name="q" defaultValue={data.search} minLength={2} placeholder="Buscar cliente por nombre o correo…" /><button type="submit">Buscar</button></Form>
-        {data.search ? <div className="cb-customer-workspace"><div className="cb-customer-results"><h3>Resultados</h3>{data.customers.map((customer) => <button key={customer.id} type="button" className={`cb-customer-result ${selectedCustomerId === customer.id ? "selected" : ""}`} onClick={() => setSelectedCustomerId(customer.id)}><span className="cb-avatar">{customer.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{customer.displayName}</strong><small>{customer.email ?? "Sin correo"} · {customer.numberOfOrders} pedidos</small></span><i>{selectedCustomerId === customer.id ? "✓" : "›"}</i></button>)}</div><div className="cb-bind-card"><span className="cb-kicker">TARJETA NEKUDOT</span><h3>{selectedCustomer?.displayName ?? "Selecciona un cliente"}</h3><p>Vincula el ID y, si corresponde, su broker.</p><Form method="post"><input type="hidden" name="intent" value="bind" /><input type="hidden" name="customerId" value={selectedCustomer?.id ?? ""} /><label>ID leído<input name="credential" required minLength={4} maxLength={128} placeholder="Escanea aquí" /></label><label>Tipo<select name="kind" defaultValue="RFID_OR_QR"><option value="RFID_OR_QR">RFID o QR</option><option value="RFID">RFID</option><option value="QR">QR</option></select></label><label>Broker<select name="brokerId" defaultValue=""><option value="">Sin broker</option>{data.brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.displayName} · {broker.code}</option>)}</select></label><label>Etiqueta<input name="label" maxLength={80} placeholder="Tarjeta principal" /></label><button className="cb-primary cb-full" type="submit" disabled={!selectedCustomer || pendingIntent === "bind"}>{pendingIntent === "bind" ? "Vinculando…" : "Crear / vincular"}</button></Form></div></div> : <div className="cb-search-prompt"><Icon name="users" /><p>Busca el perfil que ya existe en Shopify.</p></div>}
+        {data.search ? <div className="cb-customer-workspace"><div className="cb-customer-results"><h3>Resultados</h3>{data.customers.map((customer) => <button key={customer.id} type="button" className={`cb-customer-result ${selectedCustomerId === customer.id ? "selected" : ""}`} onClick={() => setSelectedCustomerId(customer.id)}><span className="cb-avatar">{customer.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{customer.displayName}</strong><small>{customer.email ?? "Sin correo"} · {customer.numberOfOrders} pedidos</small></span><i>{selectedCustomerId === customer.id ? "✓" : "›"}</i></button>)}</div><div className="cb-bind-card"><span className="cb-kicker">TARJETA NEKUDOT</span><h3>{selectedCustomer?.displayName ?? "Selecciona un cliente"}</h3><p>Vincula una tarjeta nueva o reemplaza una perdida sin tocar el saldo.</p><Form method="post"><input type="hidden" name="customerId" value={selectedCustomer?.id ?? ""} /><label>ID leído<input name="credential" value={bindCredential} onChange={(event) => setBindCredential(event.target.value)} required minLength={4} maxLength={128} placeholder="Escanea aquí" /></label><NfcBridgeReader compact onCredential={setBindCredential} /><label>Tipo<select name="kind" defaultValue="RFID_OR_QR"><option value="RFID_OR_QR">RFID o QR</option><option value="RFID">RFID</option><option value="QR">QR</option></select></label><label>Broker<select name="brokerId" defaultValue=""><option value="">Sin broker</option>{data.brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.displayName} · {broker.code}</option>)}</select></label><label>Etiqueta<input name="label" maxLength={80} placeholder="Tarjeta principal" /></label><button name="intent" value="bind" className="cb-primary cb-full" type="submit" disabled={!selectedCustomer || Boolean(pendingIntent)}>{pendingIntent === "bind" ? "Vinculando…" : "Crear / vincular"}</button><div className="cb-replace"><label className="cb-check"><input type="checkbox" name="identityVerified" value="yes" /><span>Verifiqué personalmente la identificación del cliente.</span></label><button name="intent" value="replace_card" className="cb-danger cb-full" type="submit" disabled={!selectedCustomer || Boolean(pendingIntent)}>{pendingIntent === "replace_card" ? "Reemplazando…" : "Reemplazar tarjeta perdida"}</button><small>La tarjeta anterior quedará inutilizable; el perfil, broker y saldo no cambian.</small></div></Form></div></div> : <div className="cb-search-prompt"><Icon name="users" /><p>Busca el perfil que ya existe en Shopify.</p></div>}
         <div className="cb-subheading"><h3>Miembros recientes</h3><span>{data.members.length}</span></div><div className="cb-member-grid">{data.members.map((item) => <article className="cb-member" key={item.id}><span className="cb-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><div><strong>{item.displayName}</strong><small>{item.broker ? `Broker: ${item.broker.displayName}` : "Sin broker"} · {item.shops.length} tienda(s)</small></div><div className="cb-member-balance"><strong>{formatNekudot(item.balanceCents - item.reservedCents)}</strong><small>{item.credentialCount} ID</small></div></article>)}</div>
       </section> : null}
 

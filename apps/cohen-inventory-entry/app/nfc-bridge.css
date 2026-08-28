@@ -1,0 +1,19 @@
+.nfc-bridge { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 12px; padding: 11px 12px; border: 1px solid #cfdad3; border-radius: 10px; color: #264b38; background: #f3f8f5; }
+.nfc-signal { position: relative; display: block; flex: 0 0 25px; width: 25px; height: 25px; }
+.nfc-signal i { position: absolute; inset: 50% auto auto 3px; width: 5px; height: 5px; border: 2px solid currentColor; border-radius: 50%; transform: translateY(-50%); }
+.nfc-signal i:nth-child(2) { width: 13px; height: 13px; border-left-color: transparent; border-bottom-color: transparent; transform: translateY(-50%) rotate(45deg); }
+.nfc-signal i:nth-child(3) { width: 21px; height: 21px; border-left-color: transparent; border-bottom-color: transparent; transform: translateY(-50%) rotate(45deg); opacity: .6; }
+.nfc-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.nfc-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.nfc-copy small { overflow: hidden; margin-top: 2px; color: #6b7d73; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.nfc-dot { flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: #4d9a70; box-shadow: 0 0 0 4px rgba(77,154,112,.13); }
+.nfc-bridge button { padding: 6px 9px; border: 1px solid #91ae9d; border-radius: 7px; color: #285941; background: white; font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+.nfc-connecting .nfc-dot, .nfc-waiting .nfc-dot { background: #d6a345; box-shadow: 0 0 0 4px rgba(214,163,69,.14); animation: nfc-pulse 1.25s ease-in-out infinite; }
+.nfc-read { border-color: #65a780; color: #1f6642; background: #e8f6ee; }
+.nfc-read .nfc-dot { background: #218650; box-shadow: 0 0 0 5px rgba(33,134,80,.16); }
+.nfc-error, .nfc-disconnected { border-color: #dec6a0; color: #7b5521; background: #fff8e8; }
+.nfc-compact { margin-top: 9px; padding: 8px 9px; border-color: rgba(255,255,255,.22); color: #e7f6ed; background: rgba(255,255,255,.08); }
+.nfc-compact .nfc-copy strong { color: inherit; font-size: 10px; }
+.nfc-compact button { border-color: rgba(255,255,255,.3); color: white; background: rgba(255,255,255,.1); }
+@keyframes nfc-pulse { 50% { opacity: .45; transform: scale(.8); } }
+@media (prefers-reduced-motion: reduce) { .nfc-dot { animation: none !important; } }

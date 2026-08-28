@@ -9,6 +9,8 @@ import {
   currentCafeShift,
 } from "../cafe-pos.server";
 import { formatMoney, receiptColumns, wrapReceiptText, type CafeReceiptItem } from "../cafe-pos-domain";
+import { NfcBridgeReader } from "../components/NfcBridgeReader";
+import "../nfc-bridge.css";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: stylesheet },
@@ -469,13 +471,14 @@ export default function CafePos() {
     } finally { setBusy(false); }
   }
 
-  async function identifyNekudot(event?: React.FormEvent) {
-    event?.preventDefault();
-    if (!nekudotCredential.trim()) return;
+  async function identifyNekudotCredential(rawCredential: string) {
+    const credential = rawCredential.trim();
+    if (!credential) return;
+    setNekudotCredential(credential);
     setBusy(true); setMessage(null);
     try {
       const result = await api<{ member: NekudotMember }>(
-        `/api/cafe-pos/nekudot?credential=${encodeURIComponent(nekudotCredential.trim())}`,
+        `/api/cafe-pos/nekudot?credential=${encodeURIComponent(credential)}`,
       );
       setNekudotMember(result.member);
       setNekudotRedeemAmount("0");
@@ -487,6 +490,11 @@ export default function CafePos() {
       setNekudotMember(null);
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo leer la membresía." });
     } finally { setBusy(false); }
+  }
+
+  async function identifyNekudot(event?: React.FormEvent) {
+    event?.preventDefault();
+    await identifyNekudotCredential(nekudotCredential);
   }
 
   async function openShift() {
@@ -549,7 +557,8 @@ export default function CafePos() {
           <div className="qty-controls"><button onClick={() => quantity(line.variant.id, -1)}>−</button><strong>{line.quantity}</strong><button onClick={() => quantity(line.variant.id, 1)}>+</button><button className="remove" onClick={() => setCart((current) => current.filter((item) => item.variant.id !== line.variant.id))}>Quitar</button></div>
         </div>)}
         <section className="nekudot-card">
-          <div className="nekudot-heading"><strong>Nekudot Cohen&apos;s</strong><span>5% cashback</span></div>
+          <div className="nekudot-heading"><strong>¿Tiene tarjeta Cohen&apos;s?</strong><span>5% cashback</span></div>
+          {!nekudotMember ? <small className="nekudot-prompt">Pregunta antes de cobrar. Si responde que sí, acerca la tarjeta al lector.</small> : null}
           {!nekudotMember ? <form className="nekudot-scan" onSubmit={identifyNekudot}>
             <input
               value={nekudotCredential}
@@ -565,6 +574,7 @@ export default function CafePos() {
               <div className="nekudot-amount"><input type="number" min="0" max={(Math.min(totalCents, nekudotMember.availableCents) / 100).toFixed(2)} step="0.01" value={nekudotRedeemAmount} onChange={(event) => setNekudotRedeemAmount(event.target.value)} /><button className="btn btn-secondary" type="button" onClick={() => setNekudotRedeemAmount((Math.min(totalCents, nekudotMember.availableCents) / 100).toFixed(2))}>Máximo</button></div>
             </label>
           </div>}
+          {!nekudotMember ? <NfcBridgeReader compact onCredential={(credential) => { void identifyNekudotCredential(credential); }} /> : null}
         </section>
         <div className="totals">
           {appliedNekudotCents ? <><div className="total-line"><span>Total artículos</span><span>{formatMoney(totalCents)}</span></div><div className="total-line nekudot-discount"><span>Nekudot</span><span>−{formatMoney(appliedNekudotCents)}</span></div></> : null}

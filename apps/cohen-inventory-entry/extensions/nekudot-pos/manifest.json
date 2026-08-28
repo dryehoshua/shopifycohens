@@ -1,4 +1,6 @@
 {
   "pos.home.tile.render": {},
-  "pos.home.modal.render": {}
+  "pos.home.modal.render": {},
+  "pos.purchase.post.block.render": {},
+  "pos.purchase.post.action.render": {}
 }

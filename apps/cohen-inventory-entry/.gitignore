@@ -12,6 +12,8 @@ node_modules
 /prisma/dev.sqlite
 /prisma/dev.sqlite-journal
 database.sqlite
+/hardware/.build/
+/hardware/*-test
 
 .env
 .env.*

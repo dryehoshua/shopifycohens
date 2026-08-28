@@ -466,17 +466,20 @@ model NekudotCustomerIdentity {
 
 /// RFID o QR global. El valor original nunca se persiste.
 model NekudotCredential {
-  id         String        @id @default(cuid())
-  programKey String        @default("cohens")
-  memberId   String
-  member     NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  tokenHash  String
-  lastFour   String
-  kind       String        @default("RFID_OR_QR")
-  label      String?
-  active     Boolean       @default(true)
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  programKey    String        @default("cohens")
+  memberId      String
+  member        NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  tokenHash     String
+  lastFour      String
+  kind          String        @default("RFID_OR_QR")
+  label         String?
+  active        Boolean       @default(true)
+  revokedAt     DateTime?
+  revokedReason String?
+  revokedByShop String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   @@unique([programKey, tokenHash])
   @@index([memberId, active])

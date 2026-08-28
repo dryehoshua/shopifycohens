@@ -13,6 +13,24 @@ La ruta embebida `/app/cashback` administra miembros, tarjetas/QR, brokers,
 saldos y el libro mayor. La extensión `Nekudot Cohen's` funciona dentro de
 Shopify POS; la POS web de la cafetería ofrece el mismo lector y canje.
 
+### Dinámica de venta
+
+1. El personal termina de capturar y cobrar la compra.
+2. Shopify POS muestra **“¿El cliente tiene tarjeta Cohen's?”** en la pantalla
+   posterior a la compra. En la cafetería, la pregunta aparece antes de cobrar.
+3. Si responde que sí, se escanea el RFID o QR. La tarjeta solo entrega la
+   llave del perfil; nunca contiene saldo.
+4. El backend verifica que el pedido esté pagado, asocia el cliente de Shopify
+   y acredita 5% al cliente y 5% a su broker.
+5. El pedido y los webhooks de Shopify son la fuente de verdad. Repetir el
+   escaneo o recibir de nuevo un webhook no duplica puntos.
+
+Cuando una tarjeta se pierde, el empleado busca al cliente existente en
+**Nekudot > Miembros**, revisa personalmente su identificación, escanea la
+tarjeta nueva y usa **Reemplazar tarjeta perdida**. Todas las credenciales
+anteriores quedan revocadas, la operación se audita y el saldo permanece en el
+mismo perfil.
+
 El pedido pagado es la fuente de verdad. Cada compra acredita 5% sobre su venta
 neta; una devolución revierte proporcionalmente cashback, comisión y Nekudot
 canjeados. El ID original nunca se guarda: se persiste únicamente su HMAC. Para
@@ -77,6 +95,36 @@ bitácora y corrección.
 - `app/routes/app.cashback.tsx`: administración de Nekudot y brokers.
 - `app/nekudot.server.ts`: wallet central, reserva, canje y conciliación.
 - `extensions/nekudot-pos`: mosaico y modal de Nekudot para Shopify POS.
+- `hardware/acr122u-reader.c`: lectura nativa PC/SC del UID NFC.
+- `scripts/nekudot-nfc-bridge.mjs`: puente local seguro entre el ACR122U y
+  las pantallas web de tienda/cafetería.
+
+## Lector NFC ACR122U
+
+El ACR122U se integra mediante el controlador CCID/PC/SC de macOS. No funciona
+como teclado y no requiere WebUSB. El puente escucha únicamente en
+`127.0.0.1:17812`, lee el UID público de la tarjeta y nunca lee ni persiste sus
+bloques de memoria.
+
+En la Mac conectada al lector:
+
+```sh
+pnpm nfc:start
+```
+
+Después abre `http://127.0.0.1:17812` para la prueba diagnóstica o entra a
+Nekudot en Shopify. Las pantallas **Escanear**, **Vincular cliente** y la POS de
+la cafetería detectan el puente automáticamente. Una tarjeta debe retirarse y
+acercarse de nuevo para producir otra lectura.
+
+Por seguridad, el puente solo acepta `localhost`, la URL productiva principal
+y los orígenes declarados en `NEKUDOT_NFC_ALLOWED_ORIGINS` (separados por
+coma). Para una segunda app productiva de cafetería, agrega su origen HTTPS a
+esa variable antes de iniciar el puente.
+
+El UID se usa como identificador de fidelidad, no como factor de pago o
+autenticación. La base de datos conserva únicamente su HMAC, nunca el UID en
+texto claro.
 - `app/sales-sync.server.ts`: actualización idempotente por webhook.
 - `scripts/sync-sales-from-shopify.mjs`: importación histórica completa.
 - `app/routes/webhooks.sales-sync.tsx`: pedidos y reembolsos nuevos.

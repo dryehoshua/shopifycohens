@@ -14,3 +14,11 @@ target = "pos.home.tile.render"
 [[extensions.targeting]]
 module = "./src/Modal.jsx"
 target = "pos.home.modal.render"
+
+[[extensions.targeting]]
+module = "./src/PostPurchaseBlock.jsx"
+target = "pos.purchase.post.block.render"
+
+[[extensions.targeting]]
+module = "./src/PostPurchaseModal.jsx"
+target = "pos.purchase.post.action.render"

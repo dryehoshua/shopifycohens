@@ -236,11 +236,134 @@ export async function bindNekudotCredential(input: {
         kind,
         label: String(input.label ?? "").trim().slice(0, 80) || null,
         active: true,
+        revokedAt: null,
+        revokedReason: null,
+        revokedByShop: null,
       },
     });
     return transaction.nekudotMember.findUniqueOrThrow({
       where: { id: memberId },
       include: { broker: true, credentials: true, identities: true },
+    });
+  });
+}
+
+export async function replaceNekudotCredential(input: {
+  admin: AdminApiContext;
+  shop: string;
+  customerId: string;
+  rawToken: unknown;
+  kind?: unknown;
+  label?: unknown;
+  identityVerified?: unknown;
+}) {
+  if (String(input.identityVerified ?? "") !== "yes") {
+    throw new NekudotError(
+      "Confirma que el personal verificó la identificación del cliente.",
+      400,
+      "IDENTITY_VERIFICATION_REQUIRED",
+    );
+  }
+  const customer = await resolveCustomer(input.admin, input.customerId);
+  const digest = tokenHash(input.rawToken);
+  const lastFour = nekudotCredentialLastFour(input.rawToken);
+  const kind = String(input.kind ?? "RFID_OR_QR");
+  if (!new Set(["RFID", "QR", "RFID_OR_QR"]).has(kind)) {
+    throw new NekudotError("Tipo de credencial no válido.");
+  }
+  const label = String(input.label ?? "").trim().slice(0, 80) || "Tarjeta de reemplazo";
+
+  return db.$transaction(async (transaction) => {
+    const identity = await transaction.nekudotCustomerIdentity.findUnique({
+      where: { shop_shopifyCustomerId: { shop: input.shop, shopifyCustomerId: customer.id } },
+      include: { member: true },
+    });
+    if (!identity?.member.active) {
+      throw new NekudotError(
+        "Este cliente todavía no tiene una membresía Nekudot activa.",
+        404,
+        "MEMBER_NOT_FOUND",
+      );
+    }
+    const incoming = await transaction.nekudotCredential.findUnique({
+      where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: digest } },
+    });
+    if (incoming?.active) {
+      throw new NekudotError(
+        incoming.memberId === identity.memberId
+          ? "La nueva tarjeta ya está activa en este perfil."
+          : "La nueva tarjeta ya pertenece a otro miembro.",
+        409,
+        "CREDENTIAL_ALREADY_ACTIVE",
+      );
+    }
+    if (incoming && incoming.memberId !== identity.memberId) {
+      throw new NekudotError(
+        "Una tarjeta revocada de otro miembro no puede reutilizarse.",
+        409,
+        "CREDENTIAL_OWNERSHIP_CONFLICT",
+      );
+    }
+
+    const activeCredentials = await transaction.nekudotCredential.findMany({
+      where: { memberId: identity.memberId, active: true },
+      select: { id: true, lastFour: true },
+    });
+    const revokedAt = new Date();
+    await transaction.nekudotCredential.updateMany({
+      where: { memberId: identity.memberId, active: true },
+      data: {
+        active: false,
+        revokedAt,
+        revokedReason: "LOST_OR_REPLACED",
+        revokedByShop: input.shop,
+      },
+    });
+    const replacement = await transaction.nekudotCredential.upsert({
+      where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: digest } },
+      create: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        memberId: identity.memberId,
+        tokenHash: digest,
+        lastFour,
+        kind,
+        label,
+      },
+      update: {
+        memberId: identity.memberId,
+        lastFour,
+        kind,
+        label,
+        active: true,
+        revokedAt: null,
+        revokedReason: null,
+        revokedByShop: null,
+      },
+    });
+    await transaction.nekudotLedgerEntry.create({
+      data: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        memberId: identity.memberId,
+        walletType: "CLIENT",
+        type: "CREDENTIAL_REPLACED",
+        amountCents: 0,
+        balanceAfterCents: identity.member.balanceCents,
+        currencyCode: identity.member.currencyCode,
+        shop: input.shop,
+        source: "ADMIN",
+        sourceId: replacement.id,
+        idempotencyKey: `credential-replacement:${randomUUID()}`,
+        description: `Tarjeta reemplazada para ${customer.displayName || "cliente"}; saldo conservado`,
+        metadata: {
+          identityVerified: true,
+          revokedCredentials: activeCredentials,
+          replacementLastFour: replacement.lastFour,
+        },
+      },
+    });
+    return transaction.nekudotMember.findUniqueOrThrow({
+      where: { id: identity.memberId },
+      include: { broker: true, credentials: { where: { active: true } }, identities: true },
     });
   });
 }
