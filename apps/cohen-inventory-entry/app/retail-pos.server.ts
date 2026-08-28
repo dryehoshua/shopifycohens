@@ -35,7 +35,9 @@ export class RetailPosError extends Error {
 }
 
 function configuredShop() {
-  const shop = (process.env.RETAIL_SHOP_DOMAIN || process.env.CAFE_SHOP_DOMAIN)?.trim().toLowerCase();
+  // Retail and café are separate Shopify stores. Never fall back to the café
+  // domain here: doing so can expose the wrong catalog at the supermarket POS.
+  const shop = process.env.RETAIL_SHOP_DOMAIN?.trim().toLowerCase();
   if (!shop || !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
     throw new RetailPosError("La tienda de la Retail POS no está configurada.", 503, "RETAIL_SHOP_NOT_CONFIGURED");
   }
