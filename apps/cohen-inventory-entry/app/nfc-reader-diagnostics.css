@@ -6,6 +6,19 @@
 .nfc-diagnostic-result { flex: 0 0 auto; border: 1px solid #ffffff45; border-radius: 999px; padding: 6px 9px; color: #d9eee4; background: #ffffff12; font-size: 9px; font-weight: 900; letter-spacing: .08em; }
 .nfc-diagnostic-result.running { color: #fff2bf; background: #c58f1d38; }
 .nfc-diagnostic-result.pass { color: #123c29; background: #8ee0b3; }
+.nfc-install-card { display: grid; gap: 11px; padding: 14px; border: 1px solid #d4ddd8; border-radius: 14px; background: #f7f9f7; }
+.nfc-install-card.recommended { border-color: #e1c77e; background: #fff9e8; box-shadow: inset 4px 0 #d6a537; }
+.nfc-install-copy { display: grid; gap: 4px; }
+.nfc-install-copy .nfc-diagnostic-kicker { color: #527263; }
+.nfc-install-copy > strong { font-size: 15px; }
+.nfc-install-copy > small { color: #65756e; font-size: 10px; line-height: 1.5; }
+.nfc-install-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.nfc-install-actions a { border: 1px solid #c8d6ce; border-radius: 8px; padding: 8px 10px; color: #285d47; background: white; font-size: 10px; font-weight: 900; text-decoration: none; }
+.nfc-install-actions a.primary { border-color: #237153; color: white; background: #237153; }
+.nfc-install-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 0; padding: 0; list-style: none; counter-reset: install-step; }
+.nfc-install-steps li { position: relative; min-height: 48px; padding: 8px 8px 8px 29px; border-radius: 9px; color: #62726a; background: #edf2ef; font-size: 9px; line-height: 1.4; counter-increment: install-step; }
+.nfc-install-steps li::before { position: absolute; left: 8px; top: 8px; display: grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; color: white; background: #2b7957; font-size: 8px; font-weight: 900; content: counter(install-step); }
+.nfc-driver-source { width: max-content; color: #47705c; font-size: 9px; font-weight: 800; }
 .nfc-diagnostic-checks { display: grid; gap: 8px; }
 .nfc-check { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid #d8e0db; border-radius: 11px; background: #fafbfa; }
 .nfc-check > span { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 50%; color: #687870; background: #e8ece9; font-size: 11px; font-weight: 900; }
@@ -57,5 +70,6 @@
   .nfc-test-station { grid-template-columns: auto 1fr; }
   .nfc-test-station button { grid-column: 1 / -1; width: 100%; }
   .nfc-read-history-head, .nfc-read-history > div:not(:first-child) { grid-template-columns: 1fr; }
+  .nfc-install-steps { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { .nfc-test-station.running .nfc-test-rings { animation: none; } }

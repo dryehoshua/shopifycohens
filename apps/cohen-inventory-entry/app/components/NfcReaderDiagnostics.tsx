@@ -27,6 +27,11 @@ type Props = {
 };
 
 const REQUIRED_READS = 3;
+const MAC_INSTALLER_URL = "/downloads/cohens-nfc-macos.zip";
+const ACS_MAC_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/13549/acsccid-macosx-bin-1.1.11.1-20240826.zip";
+const ACS_WINDOWS_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/9840/ACS-Unified-MSI-4280.rar";
+const ACS_LINUX_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/14214/acsccid-linux-bin-1.1.11-20240328.zip";
+const ACS_DRIVER_PAGE_URL = "https://www.acs.com.hk/en/driver/3/acr122u-usb-nfc-reader/";
 
 function wait(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
@@ -63,6 +68,7 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
   const [running, setRunning] = useState(false);
   const [fallbackCredential, setFallbackCredential] = useState("");
   const [keyboardFallbackObserved, setKeyboardFallbackObserved] = useState(false);
+  const [computerPlatform, setComputerPlatform] = useState<"mac" | "windows" | "other">("other");
   const [lookup, setLookup] = useState<{ state: "idle" | "loading" | "member" | "unassigned" | "error"; member?: LookupMember; message?: string }>({ state: "idle" });
   const sequenceRef = useRef<number | null>(null);
   const runningRef = useRef(false);
@@ -70,6 +76,10 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
   const fallbackInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { runningRef.current = running; }, [running]);
+  useEffect(() => {
+    const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
+    setComputerPlatform(platform.includes("mac") ? "mac" : platform.includes("win") ? "windows" : "other");
+  }, []);
 
   const lookupCredential = useCallback(async (credential: string) => {
     const lookupRun = lookupRunRef.current + 1;
@@ -191,6 +201,30 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
       <span className={`nfc-diagnostic-result ${testPassed ? "pass" : running ? "running" : "idle"}`}>
         {testPassed ? "APROBADO" : running ? `${reads.length}/${REQUIRED_READS}` : "LISTO"}
       </span>
+    </div>
+
+    <div className={`nfc-install-card ${bridgeError ? "recommended" : ""}`}>
+      <div className="nfc-install-copy">
+        <span className="nfc-diagnostic-kicker">CONFIGURACIÓN DE ESTA COMPUTADORA</span>
+        <strong>{bridgeError ? "Falta instalar el puente NFC local" : "Instalador y drivers del ACR122U"}</strong>
+        <small>{computerPlatform === "mac"
+          ? "Detectamos una Mac. Descarga el instalador, descomprímelo y abre el archivo .command; el lector quedará activo también después de reiniciar."
+          : computerPlatform === "windows"
+            ? "Detectamos Windows. Instala el controlador oficial ACS para habilitar el hardware. El instalador automático del puente Cohen's está disponible por ahora en Mac."
+            : "Elige el controlador oficial de tu sistema. En Mac, el paquete Cohen's instala además el puente de la POS."}</small>
+      </div>
+      <div className="nfc-install-actions">
+        <a className={computerPlatform === "mac" ? "primary" : ""} href={MAC_INSTALLER_URL} download>Instalar en Mac</a>
+        <a className={computerPlatform === "windows" ? "primary" : ""} href={ACS_WINDOWS_DRIVER_URL} target="_blank" rel="noreferrer">Driver Windows</a>
+        <a href={ACS_MAC_DRIVER_URL} target="_blank" rel="noreferrer">Driver macOS</a>
+        <a href={ACS_LINUX_DRIVER_URL} target="_blank" rel="noreferrer">Driver Linux</a>
+      </div>
+      <ol className="nfc-install-steps">
+        <li><b>Descarga</b> el instalador o driver correspondiente.</li>
+        <li><b>Conecta</b> el ACR122U directamente al USB.</li>
+        <li><b>Vuelve aquí</b> e inicia la prueba de tres lecturas.</li>
+      </ol>
+      <a className="nfc-driver-source" href={ACS_DRIVER_PAGE_URL} target="_blank" rel="noreferrer">Ver todos los drivers en el sitio oficial de ACS ↗</a>
     </div>
 
     <div className="nfc-diagnostic-checks">

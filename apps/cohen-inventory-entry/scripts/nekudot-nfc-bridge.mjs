@@ -1,13 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(root, "hardware/acr122u-reader.c");
 const buildDirectory = resolve(root, "hardware/.build");
-const executable = resolve(buildDirectory, "acr122u-reader");
+const configuredExecutable = process.env.NEKUDOT_NFC_READER_EXECUTABLE?.trim();
+const executable = configuredExecutable ? resolve(configuredExecutable) : resolve(buildDirectory, "acr122u-reader");
 const port = Number(process.env.NEKUDOT_NFC_PORT || 17812);
 const productionOrigin = "https://cohens-operations-production.up.railway.app";
 const configuredOrigins = String(process.env.NEKUDOT_NFC_ALLOWED_ORIGINS || "")
@@ -102,13 +103,20 @@ function diagnosticPage() {
 <script>let sequence=0;const status=document.querySelector('#status');const uid=document.querySelector('#uid');async function poll(){try{const health=await fetch('/health').then(r=>r.json());status.className='status '+(health.readerConnected?'ready':'');status.querySelector('strong').textContent=health.readerConnected?health.cardPresent?'Tarjeta presente':'Lector listo · acerca una tarjeta':'Buscando ACR122U…';const response=await fetch('/events?after='+sequence);if(response.status!==204&&response.ok){const event=await response.json();sequence=event.sequence;if(event.credential){uid.textContent=event.credential;status.querySelector('strong').textContent='Tarjeta leída correctamente';}}}catch{status.querySelector('strong').textContent='No se pudo consultar el lector';}setTimeout(poll,500)}poll()</script></body></html>`;
 }
 
-mkdirSync(buildDirectory, { recursive: true });
-const compilation = spawnSync("clang", [source, "-O2", "-Wall", "-Wextra", "-framework", "PCSC", "-o", executable], {
-  encoding: "utf8",
-});
-if (compilation.status !== 0) {
-  process.stderr.write(compilation.stderr || "No se pudo compilar el lector PC/SC.\n");
-  process.exit(compilation.status || 1);
+if (configuredExecutable) {
+  if (!existsSync(executable)) {
+    process.stderr.write(`No se encontró el ejecutable configurado del lector: ${executable}\n`);
+    process.exit(1);
+  }
+} else {
+  mkdirSync(buildDirectory, { recursive: true });
+  const compilation = spawnSync("clang", [source, "-O2", "-Wall", "-Wextra", "-framework", "PCSC", "-o", executable], {
+    encoding: "utf8",
+  });
+  if (compilation.status !== 0) {
+    process.stderr.write(compilation.stderr || "No se pudo compilar el lector PC/SC.\n");
+    process.exit(compilation.status || 1);
+  }
 }
 
 const state = {

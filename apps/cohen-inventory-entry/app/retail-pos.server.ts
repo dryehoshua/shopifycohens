@@ -294,57 +294,105 @@ export async function getRetailCatalog(search = "") {
   const { admin } = await adminContext();
   const location = await retailLocation(admin);
   const term = search.trim().slice(0, 80);
-  const productQuery = term.length >= 2
-    ? `status:active AND (title:*${term.replace(/["'():]/g, " ")}* OR sku:${term.replace(/["'():]/g, " ")} OR barcode:${term.replace(/["'():]/g, " ")})`
-    : "status:active";
-  const data = await graphql<{
-    products: { nodes: Array<{
+  const safeTerm = term.replace(/["'():\\]/g, " ").replace(/\s+/g, " ").trim();
+  const productQuery = safeTerm.length >= 2
+    ? `product_status:active AND (title:*${safeTerm}* OR sku:${safeTerm} OR barcode:${safeTerm})`
+    : "product_status:active";
+  type ShopifyVariant = {
+    id: string; title: string; sku: string | null; barcode: string | null; price: string;
+    inventoryPolicy: "DENY" | "CONTINUE";
+    product: {
       id: string; title: string; handle: string; vendor: string; productType: string;
       featuredMedia: { preview: { image: { url: string; altText: string | null } | null } | null } | null;
-      variants: { nodes: Array<{
-        id: string; title: string; sku: string | null; barcode: string | null; price: string;
-        inventoryItem: { id: string; tracked: boolean; inventoryLevel: { quantities: Array<{ name: string; quantity: number }> } | null };
-      }> };
-    }> };
-  }>(admin, `#graphql
-    query RetailPosCatalog($locationId: ID!, $query: String!) {
-      products(first: 250, query: $query, sortKey: TITLE) {
-        nodes {
-          id title handle vendor productType
-          featuredMedia { preview { image { url altText } } }
-          variants(first: 100) {
-            nodes {
-              id title sku barcode price
-              inventoryItem {
-                id tracked
-                inventoryLevel(locationId: $locationId) { quantities(names: ["available"]) { name quantity } }
-              }
+    };
+    inventoryItem: {
+      id: string; tracked: boolean;
+      inventoryLevel: { quantities: Array<{ name: string; quantity: number }> } | null;
+    };
+  };
+  const variants: ShopifyVariant[] = [];
+  let cursor: string | null = null;
+  let hasNextPage = true;
+  let pageCount = 0;
+
+  // Shopify limits each connection page. Paginating variants at the root also
+  // avoids silently losing products with more than 100 variants.
+  while (hasNextPage) {
+    if (pageCount >= 100) {
+      throw new RetailPosError("El catálogo excede el límite seguro de 25,000 variantes.", 502, "CATALOG_TOO_LARGE");
+    }
+    const data: {
+      productVariants: {
+        nodes: ShopifyVariant[];
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      };
+    } = await graphql(admin, `#graphql
+      query RetailPosCatalog($locationId: ID!, $query: String!, $cursor: String) {
+        productVariants(first: 250, after: $cursor, query: $query, sortKey: TITLE) {
+          nodes {
+            id title sku barcode price inventoryPolicy
+            product {
+              id title handle vendor productType
+              featuredMedia { preview { image { url altText } } }
+            }
+            inventoryItem {
+              id tracked
+              inventoryLevel(locationId: $locationId) { quantities(names: ["available"]) { name quantity } }
             }
           }
+          pageInfo { hasNextPage endCursor }
         }
       }
+    `, { locationId: location.id, query: productQuery, cursor });
+    variants.push(...data.productVariants.nodes);
+    hasNextPage = data.productVariants.pageInfo.hasNextPage;
+    cursor = data.productVariants.pageInfo.endCursor;
+    pageCount += 1;
+    if (hasNextPage && !cursor) {
+      throw new RetailPosError("Shopify indicó más catálogo pero no devolvió cursor.", 502, "CATALOG_CURSOR_MISSING");
     }
-  `, { locationId: location.id, query: productQuery });
+  }
+
+  const productMap = new Map<string, {
+    id: string; title: string; handle: string; vendor: string; productType: string;
+    imageUrl: string | null; imageAlt: string; variants: Array<{
+      id: string; title: string; sku: string | null; barcode: string | null;
+      priceCents: number; tracked: boolean; available: number; inventoryPolicy: "DENY" | "CONTINUE";
+    }>;
+  }>();
+  for (const variant of variants) {
+    let product = productMap.get(variant.product.id);
+    if (!product) {
+      product = {
+        id: variant.product.id,
+        title: variant.product.title,
+        handle: variant.product.handle,
+        vendor: variant.product.vendor,
+        productType: variant.product.productType,
+        imageUrl: variant.product.featuredMedia?.preview?.image?.url ?? null,
+        imageAlt: variant.product.featuredMedia?.preview?.image?.altText ?? variant.product.title,
+        variants: [],
+      };
+      productMap.set(product.id, product);
+    }
+    product.variants.push({
+      id: variant.id,
+      title: variant.title,
+      sku: variant.sku,
+      barcode: variant.barcode,
+      priceCents: parseShopifyMoneyToCents(variant.price),
+      tracked: variant.inventoryItem.tracked,
+      available: variant.inventoryItem.inventoryLevel?.quantities.find((quantity) => quantity.name === "available")?.quantity ?? 0,
+      inventoryPolicy: variant.inventoryPolicy,
+    });
+  }
+  const products = [...productMap.values()].sort((left, right) => left.title.localeCompare(right.title, "es-MX"));
   return {
     location,
-    products: data.products.nodes.map((product) => ({
-      id: product.id,
-      title: product.title,
-      handle: product.handle,
-      vendor: product.vendor,
-      productType: product.productType,
-      imageUrl: product.featuredMedia?.preview?.image?.url ?? null,
-      imageAlt: product.featuredMedia?.preview?.image?.altText ?? product.title,
-      variants: product.variants.nodes.map((variant) => ({
-        id: variant.id,
-        title: variant.title,
-        sku: variant.sku,
-        barcode: variant.barcode,
-        priceCents: parseShopifyMoneyToCents(variant.price),
-        tracked: variant.inventoryItem.tracked,
-        available: variant.inventoryItem.inventoryLevel?.quantities.find((quantity) => quantity.name === "available")?.quantity ?? 0,
-      })),
-    })),
+    products,
+    productCount: products.length,
+    variantCount: variants.length,
+    syncedAt: new Date().toISOString(),
   };
 }
 

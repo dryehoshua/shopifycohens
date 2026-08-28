@@ -51,6 +51,7 @@ type Variant = {
   priceCents: number;
   tracked: boolean;
   available: number;
+  inventoryPolicy: "DENY" | "CONTINUE";
 };
 type Product = {
   id: string;
@@ -140,6 +141,13 @@ type SuspendedSale = {
 };
 type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | "reader" | null;
 
+type CatalogMeta = {
+  productCount: number;
+  variantCount: number;
+  syncedAt: string;
+  location: { id: string; name: string; isActive: boolean };
+};
+
 type UsbEndpoint = { direction: string; endpointNumber: number };
 type UsbAlternate = { alternateSetting: number; endpoints: UsbEndpoint[] };
 type UsbInterface = { interfaceNumber: number; alternates: UsbAlternate[] };
@@ -169,6 +177,10 @@ function moneyInputCents(value: string) {
   const normalized = value.trim().replace(",", ".");
   if (!/^\d+(?:\.\d{0,2})?$/.test(normalized)) return 0;
   return Math.max(0, Math.round(Number(normalized) * 100));
+}
+
+function variantCanSell(variant: Variant) {
+  return !variant.tracked || variant.available > 0 || variant.inventoryPolicy === "CONTINUE";
 }
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -288,28 +300,66 @@ export default function RetailPos() {
   const [staffPin, setStaffPin] = useState("");
   const [printerName, setPrinterName] = useState("");
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [catalogMeta, setCatalogMeta] = useState<CatalogMeta | null>(null);
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [suspendedSales, setSuspendedSales] = useState<SuspendedSale[]>([]);
   const [suspendedLoaded, setSuspendedLoaded] = useState(false);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
   const searchRef = useRef<HTMLInputElement>(null);
+  const catalogRequestRef = useRef(0);
 
-  const loadData = useCallback(async () => {
-    const [catalogResult, salesResult, shiftResult] = await Promise.all([
-      api<{ products: Product[] }>("/api/retail-pos/catalog"),
+  const loadCatalog = useCallback(async () => {
+    const requestId = catalogRequestRef.current + 1;
+    catalogRequestRef.current = requestId;
+    setCatalogRefreshing(true);
+    try {
+      const result = await api<{ products: Product[] } & CatalogMeta>("/api/retail-pos/catalog");
+      if (catalogRequestRef.current !== requestId) return;
+      setProducts(result.products);
+      setCatalogMeta({
+        productCount: result.productCount,
+        variantCount: result.variantCount,
+        syncedAt: result.syncedAt,
+        location: result.location,
+      });
+      setLastUpdatedAt(new Date(result.syncedAt));
+    } finally {
+      if (catalogRequestRef.current === requestId) setCatalogRefreshing(false);
+    }
+  }, []);
+
+  const loadOperations = useCallback(async () => {
+    const [salesResult, shiftResult] = await Promise.all([
       api<{ sales: Sale[] }>("/api/retail-pos/orders?limit=50"),
       api<{ shift: Shift | null }>("/api/retail-pos/shift"),
     ]);
-    setProducts(catalogResult.products); setSales(salesResult.sales); setShift(shiftResult.shift); setLastUpdatedAt(new Date());
+    setSales(salesResult.sales);
+    setShift(shiftResult.shift);
   }, []);
 
+  const loadData = useCallback(async () => {
+    await Promise.all([loadCatalog(), loadOperations()]);
+  }, [loadCatalog, loadOperations]);
+
   useEffect(() => {
-    const refresh = () => loadData().catch((error) => setMessage({ tone: "error", text: error.message }));
-    refresh();
-    const interval = window.setInterval(refresh, 45_000);
+    const reportError = (error: unknown) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar Shopify." });
+    void loadData().catch(reportError);
+    const catalogInterval = window.setInterval(() => { void loadCatalog().catch(reportError); }, 30_000);
+    const operationsInterval = window.setInterval(() => { void loadOperations().catch(reportError); }, 45_000);
+    const refreshVisibleCatalog = () => {
+      if (document.visibilityState === "visible") void loadCatalog().catch(reportError);
+    };
+    window.addEventListener("focus", refreshVisibleCatalog);
+    document.addEventListener("visibilitychange", refreshVisibleCatalog);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/retail-pos-sw.js").catch(() => undefined);
-    return () => window.clearInterval(interval);
-  }, [loadData]);
+    return () => {
+      window.clearInterval(catalogInterval);
+      window.clearInterval(operationsInterval);
+      window.removeEventListener("focus", refreshVisibleCatalog);
+      document.removeEventListener("visibilitychange", refreshVisibleCatalog);
+    };
+  }, [loadCatalog, loadData, loadOperations]);
 
   useEffect(() => {
     const usb = (navigator as UsbNavigator).usb;
@@ -356,16 +406,16 @@ export default function RetailPos() {
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
   function add(product: Product, variant: Variant, amount = 1) {
-    if (variant.tracked && variant.available < 1) return;
+    if (!variantCanSell(variant)) return;
     const safeAmount = Math.max(1, Math.min(99, Math.trunc(amount)));
     setCart((current) => {
       const index = current.findIndex((line) => line.variant.id === variant.id);
       if (index === -1) {
-        if (variant.tracked && safeAmount > variant.available) return current;
+        if (variant.tracked && variant.inventoryPolicy === "DENY" && safeAmount > variant.available) return current;
         return [...current, { product, variant, quantity: safeAmount }];
       }
       const nextQuantity = current[index].quantity + safeAmount;
-      if (variant.tracked && nextQuantity > variant.available) return current;
+      if (variant.tracked && variant.inventoryPolicy === "DENY" && nextQuantity > variant.available) return current;
       const next = [...current]; next[index] = { ...next[index], quantity: nextQuantity }; return next;
     });
     setLastScannedVariantId(variant.id);
@@ -376,7 +426,7 @@ export default function RetailPos() {
       if (line.variant.id !== variantId) return [line];
       const next = line.quantity + delta;
       if (next <= 0) return [];
-      if (line.variant.tracked && next > line.variant.available) return [line];
+      if (line.variant.tracked && line.variant.inventoryPolicy === "DENY" && next > line.variant.available) return [line];
       return [{ ...line, quantity: next }];
     }));
   }
@@ -697,7 +747,7 @@ export default function RetailPos() {
     <div className="retail-layout">
       <main className="retail-sale-workspace">
         <section className="retail-scan-station">
-          <div className="retail-scan-heading"><div><span className="retail-kicker">CAJA DE SUPERMERCADO</span><h2>Escanea el siguiente artículo</h2></div><span className="retail-sync">{lastUpdatedAt ? `Shopify · ${lastUpdatedAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}` : "Sincronizando Shopify…"}</span></div>
+          <div className="retail-scan-heading"><div><span className="retail-kicker">CAJA DE SUPERMERCADO</span><h2>Escanea el siguiente artículo</h2></div><div className="retail-sync"><span>{lastUpdatedAt ? `Shopify en vivo · ${catalogMeta?.productCount ?? products.length} productos · ${lastUpdatedAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Sincronizando catálogo completo…"}</span><button type="button" disabled={catalogRefreshing} onClick={() => { void loadCatalog().catch((error) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar Shopify." })); }}>{catalogRefreshing ? "Actualizando…" : "Actualizar"}</button></div></div>
           <form className="retail-search" onSubmit={scanOrSearch}>
             <span className="retail-scan-icon">▣</span>
             <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Código de barras, SKU o nombre del producto" autoComplete="off" />
@@ -723,7 +773,7 @@ export default function RetailPos() {
             <button className="retail-line-remove" aria-label={`Quitar ${line.product.title}`} onClick={() => setCart((current) => current.filter((item) => item.variant.id !== line.variant.id))}>×</button>
           </div>)}</div>
         </section>
-        <section className="retail-quick-panel"><div className="retail-quick-heading"><div><span className="retail-kicker">TECLAS RÁPIDAS</span><strong>Productos frecuentes / sin código a la mano</strong></div><button onClick={() => setDrawer("catalog")}>Ver todo</button></div><div className="retail-quick-grid">{quickVariants.map(({ product, variant }) => <button key={variant.id} disabled={variant.tracked && variant.available <= 0} onClick={() => add(product, variant)}><span>{product.title}</span><b>{formatMoney(variant.priceCents)}</b></button>)}</div></section>
+        <section className="retail-quick-panel"><div className="retail-quick-heading"><div><span className="retail-kicker">TECLAS RÁPIDAS</span><strong>Productos frecuentes / sin código a la mano</strong></div><button onClick={() => setDrawer("catalog")}>Ver todo</button></div><div className="retail-quick-grid">{quickVariants.map(({ product, variant }) => <button key={variant.id} disabled={!variantCanSell(variant)} onClick={() => add(product, variant)}><span>{product.title}</span><b>{formatMoney(variant.priceCents)}</b></button>)}</div></section>
       </main>
       <aside className="retail-cart retail-checkout">
         <div className="retail-cart-title"><div><span className="retail-kicker">CLIENTE Y COBRO</span><h2>Finalizar venta</h2></div><span className={`retail-shift-dot ${shift ? "open" : ""}`}>{shift ? "Caja abierta" : "Caja cerrada"}</span></div>
@@ -745,13 +795,21 @@ export default function RetailPos() {
     </div>
     {drawer ? <><button type="button" className="retail-drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="retail-drawer"><button className="retail-button secondary" onClick={() => setDrawer(null)}>Cerrar</button>
       {drawer === "catalog" ? <><span className="retail-kicker">CATÁLOGO SHOPIFY</span><h2>Buscar producto</h2>
+        <div className="retail-catalog-status"><div><strong>{catalogMeta?.productCount ?? products.length} productos · {catalogMeta?.variantCount ?? products.reduce((sum, product) => sum + product.variants.length, 0)} variantes</strong><small>Ubicación: {catalogMeta?.location.name ?? "Plaza Victoria"} · incluye productos sin existencia</small></div><button type="button" disabled={catalogRefreshing} onClick={() => { void loadCatalog().catch((error) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar Shopify." })); }}>{catalogRefreshing ? "Consultando…" : "Actualizar Shopify"}</button></div>
         <input className="retail-catalog-search" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Nombre, SKU, código o marca" />
         <div className="retail-filters">{vendors.slice(0, 16).map((item) => <button key={item} className={vendor === item ? "active" : ""} onClick={() => setVendor(item)}>{item}</button>)}</div>
         <div className="retail-product-grid drawer-grid">{visibleProducts.map((product) => <article className="retail-product" key={product.id}>
           {product.imageUrl ? <img src={product.imageUrl} alt={product.imageAlt} /> : <div className="retail-placeholder">C</div>}
           <div className="retail-product-copy"><small>{product.vendor || product.productType || "COHEN'S"}</small><strong>{product.title}</strong><div className="retail-variants">{product.variants.map((variant) => {
-            const soldOut = variant.tracked && variant.available <= 0;
-            return <button key={variant.id} disabled={soldOut} onClick={() => { add(product, variant); setDrawer(null); window.requestAnimationFrame(() => searchRef.current?.focus()); }}><span>{variant.title === "Default Title" ? "Agregar" : variant.title}</span><b>{formatMoney(variant.priceCents)}</b><em>{variant.tracked ? (soldOut ? "Agotado" : `${variant.available} en stock`) : "Disponible"}</em></button>;
+            const soldOut = !variantCanSell(variant);
+            const stockLabel = !variant.tracked
+              ? "Sin control de inventario"
+              : variant.available > 0
+                ? `${variant.available} en stock`
+                : variant.inventoryPolicy === "CONTINUE"
+                  ? "0 en stock · Shopify permite vender"
+                  : "Agotado · visible, no vendible";
+            return <button key={variant.id} disabled={soldOut} onClick={() => { add(product, variant); setDrawer(null); window.requestAnimationFrame(() => searchRef.current?.focus()); }}><span>{variant.title === "Default Title" ? "Agregar" : variant.title}</span><b>{formatMoney(variant.priceCents)}</b><em>{stockLabel}</em></button>;
           })}</div></div>
         </article>)}</div>
         {!visibleProducts.length ? <div className="retail-empty"><strong>Sin coincidencias</strong><span>Prueba con otro nombre, SKU o código.</span></div> : null}
