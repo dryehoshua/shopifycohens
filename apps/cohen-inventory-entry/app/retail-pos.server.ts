@@ -11,8 +11,10 @@ import {
   type CafeReceiptItem,
 } from "./cafe-pos-domain";
 import {
+  bindNekudotCredential,
   cancelNekudotReservation,
   lookupNekudotMember,
+  replaceNekudotCredential,
   renewNekudotReservation,
   reserveNekudot,
   searchShopifyCustomers,
@@ -347,9 +349,84 @@ export async function getRetailCatalog(search = "") {
 }
 
 export async function searchRetailCustomers(request: Request, search: string) {
-  await currentRetailSession(request);
+  const session = await currentRetailSession(request);
   const { admin } = await adminContext();
-  return searchShopifyCustomers(admin, search);
+  const customers = await searchShopifyCustomers(admin, search);
+  const identities = customers.length
+    ? await db.nekudotCustomerIdentity.findMany({
+        where: { shop: session!.shop, shopifyCustomerId: { in: customers.map((customer) => customer.id) } },
+        include: {
+          member: {
+            include: {
+              broker: true,
+              credentials: { where: { active: true }, orderBy: { updatedAt: "desc" } },
+            },
+          },
+        },
+      })
+    : [];
+  const byCustomerId = new Map(identities.map((identity) => [identity.shopifyCustomerId, identity.member]));
+  return customers.map((customer) => {
+    const member = byCustomerId.get(customer.id);
+    return {
+      ...customer,
+      member: member?.active
+        ? {
+            id: member.id,
+            availableCents: member.balanceCents - member.reservedCents,
+            balanceCents: member.balanceCents,
+            reservedCents: member.reservedCents,
+            credentialCount: member.credentials.length,
+            credentialLastFour: member.credentials[0]?.lastFour ?? null,
+            broker: member.broker ? { displayName: member.broker.displayName, code: member.broker.code } : null,
+          }
+        : null,
+    };
+  });
+}
+
+export async function assignRetailCustomerCredential(request: Request, input: {
+  customerId: unknown;
+  credential: unknown;
+  label?: unknown;
+  managerPin?: unknown;
+  replace?: unknown;
+  identityVerified?: unknown;
+}) {
+  const authorization = await requireRetailManager(request, input.managerPin);
+  const { admin } = await adminContext();
+  const customerId = String(input.customerId ?? "");
+  const rawToken = input.credential;
+  const replacing = input.replace === true || input.replace === "true";
+  const member = replacing
+    ? await replaceNekudotCredential({
+        admin,
+        shop: authorization.session.shop,
+        customerId,
+        rawToken,
+        kind: "RFID_OR_QR",
+        label: input.label || "Tarjeta reemplazada en Retail POS",
+        identityVerified: input.identityVerified,
+      })
+    : await bindNekudotCredential({
+        admin,
+        shop: authorization.session.shop,
+        customerId,
+        rawToken,
+        kind: "RFID_OR_QR",
+        label: input.label || "Tarjeta asignada en Retail POS",
+      });
+  return {
+    id: member.id,
+    displayName: member.displayName,
+    email: member.email,
+    availableCents: member.balanceCents - member.reservedCents,
+    balanceCents: member.balanceCents,
+    reservedCents: member.reservedCents,
+    credentialCount: member.credentials.filter((credential) => credential.active).length,
+    credentialLastFour: member.credentials.find((credential) => credential.active)?.lastFour ?? null,
+    broker: member.broker ? { displayName: member.broker.displayName, code: member.broker.code } : null,
+  };
 }
 
 export async function currentRetailShift(shop = configuredShop()) {

@@ -33,6 +33,7 @@ type ShopifyCustomerSummary = {
   id: string;
   displayName: string;
   defaultEmailAddress: { emailAddress: string } | null;
+  defaultPhoneNumber: { phoneNumber: string } | null;
   numberOfOrders: string;
   amountSpent: { amount: string; currencyCode: string };
 };
@@ -63,6 +64,7 @@ export async function searchShopifyCustomers(admin: AdminApiContext, search: str
         nodes {
           id displayName
           defaultEmailAddress { emailAddress }
+          defaultPhoneNumber { phoneNumber }
           numberOfOrders
           amountSpent { amount currencyCode }
         }
@@ -73,6 +75,7 @@ export async function searchShopifyCustomers(admin: AdminApiContext, search: str
     id: customer.id,
     displayName: customer.displayName || "Cliente sin nombre",
     email: customer.defaultEmailAddress?.emailAddress?.trim() || null,
+    phone: customer.defaultPhoneNumber?.phoneNumber?.trim() || null,
     numberOfOrders: Number(customer.numberOfOrders) || 0,
     amountSpent: customer.amountSpent.amount,
     currencyCode: customer.amountSpent.currencyCode,

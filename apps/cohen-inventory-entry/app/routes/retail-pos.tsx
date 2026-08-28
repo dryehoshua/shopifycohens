@@ -72,7 +72,24 @@ type Shift = {
   terminalExpectedCents?: number | null;
   terminalVarianceCents?: number | null;
 };
-type Customer = { id: string; displayName: string; email: string | null; numberOfOrders?: number; amountSpent?: string };
+type CustomerMembership = {
+  id: string;
+  availableCents: number;
+  balanceCents: number;
+  reservedCents: number;
+  credentialCount: number;
+  credentialLastFour: string | null;
+  broker: { displayName: string; code: string } | null;
+};
+type Customer = {
+  id: string;
+  displayName: string;
+  email: string | null;
+  phone?: string | null;
+  numberOfOrders?: number;
+  amountSpent?: string;
+  member?: CustomerMembership | null;
+};
 type Member = {
   id: string;
   displayName: string;
@@ -251,6 +268,11 @@ export default function RetailPos() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [newCustomerCredential, setNewCustomerCredential] = useState("");
+  const [credentialLabel, setCredentialLabel] = useState("Tarjeta de prueba POS");
+  const [replaceCredential, setReplaceCredential] = useState(false);
+  const [identityVerified, setIdentityVerified] = useState(false);
   const [member, setMember] = useState<Member | null>(null);
   const [credential, setCredential] = useState("");
   const [nekudotAmount, setNekudotAmount] = useState("0");
@@ -464,6 +486,64 @@ export default function RetailPos() {
     finally { setBusy(false); }
   }
 
+  function generateTestCredential() {
+    const values = new Uint8Array(6);
+    globalThis.crypto.getRandomValues(values);
+    const suffix = [...values].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+    setNewCustomerCredential(`COHENS-TEST-${suffix}`);
+    setCredentialLabel("Tarjeta de prueba POS");
+    setReplaceCredential(false);
+    setIdentityVerified(false);
+  }
+
+  function selectCustomerForSale(item: Customer) {
+    setCustomer(item); setMember(null); setCredential(""); setNekudotAmount("0"); setDrawer(null);
+    setMessage({
+      tone: item.member ? "success" : "info",
+      text: item.member
+        ? `${item.displayName} identificado por su perfil Shopify. Esta compra acreditará 5% en Nekudot; para canjear saldo, lee su tarjeta.`
+        : `${item.displayName} seleccionado. Asigna una tarjeta para activar su membresía Nekudot.`,
+    });
+  }
+
+  async function assignCustomerCredential() {
+    if (!selectedCustomer || newCustomerCredential.trim().length < 4) return;
+    let managerPin: string | undefined;
+    if (initial.staff?.role !== "MANAGER") {
+      const pin = window.prompt("Ingresa el PIN del gerente para asignar esta tarjeta:");
+      if (pin === null) return;
+      managerPin = pin;
+    }
+    if (replaceCredential && !identityVerified) {
+      setMessage({ tone: "error", text: "Confirma que verificaste la identificación antes de reemplazar una tarjeta." });
+      return;
+    }
+    const rawCredential = newCustomerCredential.trim();
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ member: CustomerMembership; message: string }>("/api/retail-pos/customers", {
+        method: "POST",
+        body: JSON.stringify({
+          customerId: selectedCustomer.id,
+          credential: rawCredential,
+          label: credentialLabel,
+          managerPin,
+          replace: replaceCredential,
+          identityVerified: identityVerified ? "yes" : "no",
+        }),
+      });
+      const updatedCustomer = { ...selectedCustomer, member: result.member };
+      setSelectedCustomer(updatedCustomer);
+      setCustomers((current) => current.map((item) => item.id === updatedCustomer.id ? updatedCustomer : item));
+      setCustomer(updatedCustomer); setCredential(rawCredential);
+      setMessage({ tone: "success", text: `${result.message} Ya puede identificarse con la tarjeta o con su teléfono.` });
+      await identifyCredential(rawCredential);
+      setReplaceCredential(false); setIdentityVerified(false);
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarjeta." });
+    } finally { setBusy(false); }
+  }
+
   async function identifyCredential(raw: string) {
     const value = raw.trim(); if (!value) return;
     setCredential(value); setBusy(true); setMessage(null);
@@ -603,6 +683,7 @@ export default function RetailPos() {
       <div className="retail-top-actions">
         <button className="retail-button dark" onClick={connectPrinter}>Impresora <span>{printerName ? "✓" : ""}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("catalog")}>Catálogo</button>
+        <button className="retail-button dark" onClick={() => setDrawer("customers")}>Clientes</button>
         <button className="retail-button dark" onClick={() => setDrawer("suspended")}>En espera <span className="retail-counter">{suspendedSales.length}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("orders")}>Pedidos</button>
         <button className="retail-button dark" onClick={() => setDrawer("shift")}>Caja</button>
@@ -644,10 +725,10 @@ export default function RetailPos() {
       <aside className="retail-cart retail-checkout">
         <div className="retail-cart-title"><div><span className="retail-kicker">CLIENTE Y COBRO</span><h2>Finalizar venta</h2></div><span className={`retail-shift-dot ${shift ? "open" : ""}`}>{shift ? "Caja abierta" : "Caja cerrada"}</span></div>
         <section className="retail-customer-card">
-          <div>{customer ? <><strong>{customer.displayName}</strong><small>{customer.email || "Cliente Shopify"}{member ? ` · ${formatMoney(member.availableCents)} Nekudot` : ""}</small></> : <><strong>¿Tiene tarjeta Cohen&apos;s?</strong><small>Escanéala para sumar 5% de Nekudot</small></>}</div>
+          <div>{customer ? <><strong>{customer.displayName}</strong><small>{customer.phone || customer.email || "Cliente Shopify"}{member ? ` · ${formatMoney(member.availableCents)} Nekudot` : customer.member ? ` · Membresía Nekudot activa` : ""}</small></> : <><strong>¿Tiene tarjeta Cohen&apos;s?</strong><small>Escanéala o búscalo por teléfono para sumar 5%</small></>}</div>
           <button onClick={() => setDrawer("customers")}>{customer ? "Cambiar" : "Leer tarjeta"}</button>
         </section>
-        <div className={`retail-loyalty-summary ${member ? "active" : ""}`}><span>Nekudot Cohen&apos;s</span>{member ? <><strong>{formatMoney(member.availableCents)} disponibles</strong><small>Esta compra generará aproximadamente {formatMoney(Math.round(amountDueCents * 0.05))} (5%)</small></> : <><strong>5% de regreso</strong><small>Identifica al cliente antes de cobrar.</small></>}</div>
+        <div className={`retail-loyalty-summary ${member || customer?.member ? "active" : ""}`}><span>Nekudot Cohen&apos;s</span>{member ? <><strong>{formatMoney(member.availableCents)} disponibles</strong><small>Esta compra generará aproximadamente {formatMoney(Math.round(amountDueCents * 0.05))} (5%)</small></> : customer?.member ? <><strong>{formatMoney(customer.member.availableCents)} disponibles</strong><small>Identificado por teléfono/perfil. Suma 5%; lee su tarjeta para canjear.</small></> : <><strong>5% de regreso</strong><small>Identifica al cliente antes de cobrar.</small></>}</div>
         <section className="retail-adjustments">
           <label>Descuento autorizado<input type="number" min="0" max={(Math.max(0, grossCents - 1) / 100).toFixed(2)} step="0.01" value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} /></label>
           {member ? <label>Usar Nekudot<div><input type="number" min="0" max={(Math.min(afterDiscountCents, member.availableCents) / 100).toFixed(2)} step="0.01" value={nekudotAmount} onChange={(event) => setNekudotAmount(event.target.value)} /><button onClick={() => setNekudotAmount((Math.min(afterDiscountCents, member.availableCents) / 100).toFixed(2))}>Máximo</button></div></label> : null}
@@ -675,11 +756,21 @@ export default function RetailPos() {
       {drawer === "suspended" ? <><span className="retail-kicker">CONTINUIDAD DE CAJA</span><h2>Ventas en espera</h2>
         {!suspendedSales.length ? <div className="retail-empty"><strong>No hay ventas en espera</strong><span>Puedes apartar temporalmente una venta sin perder sus artículos ni su cliente.</span></div> : <div className="retail-suspended-list">{suspendedSales.map((suspended) => <article key={suspended.id}><div><strong>{suspended.customer?.displayName || "Cliente ocasional"}</strong><b>{formatMoney(suspended.cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0))}</b></div><small>{new Date(suspended.createdAt).toLocaleString("es-MX")} · {suspended.cart.reduce((sum, line) => sum + line.quantity, 0)} artículos</small><div><button onClick={() => resumeSuspendedSale(suspended)}>Recuperar venta</button><button className="danger" onClick={() => setSuspendedSales((current) => current.filter((item) => item.id !== suspended.id))}>Eliminar</button></div></article>)}</div>}
       </> : null}
-      {drawer === "customers" ? <><span className="retail-kicker">CLIENTES Y NEKUDOT</span><h2>Identificar cliente</h2>
-        <div className="retail-member-scan"><strong>¿Tiene tarjeta Cohen&apos;s?</strong><form onSubmit={(event) => { event.preventDefault(); void identifyCredential(credential); }}><input value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="RFID / QR" /><button disabled={busy || credential.length < 4}>Leer</button></form><NfcBridgeReader onCredential={(value) => { void identifyCredential(value); }} /></div>
+      {drawer === "customers" ? <><span className="retail-kicker">CLIENTES SHOPIFY + NEKUDOT</span><h2>Clientes</h2>
+        <div className="retail-member-scan"><strong>Identificación inmediata por tarjeta</strong><form onSubmit={(event) => { event.preventDefault(); void identifyCredential(credential); }}><input value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="RFID / QR" /><button disabled={busy || credential.length < 4}>Leer</button></form><NfcBridgeReader onCredential={(value) => { void identifyCredential(value); }} /></div>
         {member ? <div className="retail-selected"><strong>{member.displayName}</strong><span>{formatMoney(member.availableCents)} disponible · 5% en esta compra{member.broker ? ` · Broker ${member.broker.displayName}` : ""}</span></div> : null}
-        <form className="retail-customer-search" onSubmit={findCustomers}><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Nombre, correo o teléfono" /><button disabled={busy || customerSearch.length < 2}>Buscar Shopify</button></form>
-        <div className="retail-customer-results">{customers.map((item) => <button key={item.id} onClick={() => { setCustomer(item); setMember(null); setCredential(""); setDrawer(null); }}><strong>{item.displayName}</strong><span>{item.email || "Sin correo"} · {item.numberOfOrders || 0} pedidos</span></button>)}</div>
+        <div className="retail-customer-search-heading"><strong>Buscar en la base de Cohen&apos;s</strong><small>Nombre, teléfono o correo del perfil Shopify</small></div>
+        <form className="retail-customer-search" onSubmit={findCustomers}><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Ej. Yehoshua, 55 1234 5678…" /><button disabled={busy || customerSearch.length < 2}>Buscar</button></form>
+        <div className="retail-customer-results">{customers.map((item) => <button key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => { setSelectedCustomer(item); setNewCustomerCredential(""); setReplaceCredential(false); setIdentityVerified(false); }}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
+        {customerSearch.length >= 2 && !busy && !customers.length ? <div className="retail-empty compact"><strong>No encontramos coincidencias</strong><span>Prueba el nombre completo o el teléfono con código de país.</span></div> : null}
+        {selectedCustomer ? <section className="retail-customer-profile">
+          <div className="retail-customer-profile-head"><span className="retail-customer-avatar large">{selectedCustomer.displayName.slice(0, 2).toUpperCase()}</span><div><span className="retail-kicker">CLIENTE SELECCIONADO</span><h3>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p></div></div>
+          {selectedCustomer.member ? <div className="retail-membership-status active"><strong>Membresía Nekudot activa</strong><span>{formatMoney(selectedCustomer.member.availableCents)} disponibles · {selectedCustomer.member.credentialCount} tarjeta(s){selectedCustomer.member.credentialLastFour ? ` · termina ${selectedCustomer.member.credentialLastFour}` : ""}</span></div> : <div className="retail-membership-status"><strong>Aún no tiene tarjeta</strong><span>Al asignarla se crea su wallet compartida con la cafetería.</span></div>}
+          <button className="retail-button primary wide" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar este cliente en la venta</button>
+          <div className="retail-card-assignment"><span className="retail-kicker">ASIGNAR TARJETA RFID / QR</span><label>ID de la tarjeta<input value={newCustomerCredential} onChange={(event) => setNewCustomerCredential(event.target.value)} placeholder="Acerca la tarjeta o genera una de prueba" /></label><NfcBridgeReader compact onCredential={setNewCustomerCredential} /><label>Etiqueta<input value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={80} /></label><div className="retail-card-actions"><button type="button" onClick={generateTestCredential}>Generar ID de prueba</button><button type="button" className="primary" disabled={busy || newCustomerCredential.trim().length < 4} onClick={assignCustomerCredential}>{busy ? "Asignando…" : "Asignar al cliente"}</button></div>
+            {selectedCustomer.member ? <div className="retail-replace-option"><label><input type="checkbox" checked={replaceCredential} onChange={(event) => { setReplaceCredential(event.target.checked); if (!event.target.checked) setIdentityVerified(false); }} /> Reemplazar tarjetas anteriores</label>{replaceCredential ? <label><input type="checkbox" checked={identityVerified} onChange={(event) => setIdentityVerified(event.target.checked)} /> Verifiqué personalmente su identificación</label> : null}</div> : null}
+          </div>
+        </section> : null}
         {customer ? <button className="retail-button danger wide" onClick={() => { setCustomer(null); setMember(null); setCredential(""); setDrawer(null); }}>Continuar sin cliente</button> : null}
       </> : null}
       {drawer === "orders" ? <><span className="retail-kicker">SHOPIFY</span><h2>Ventas recientes</h2>{sales.map((sale) => <article className="retail-sale" key={sale.id}><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><b>{formatMoney(sale.totalCents)}</b></div><small>{new Date(sale.createdAt).toLocaleString("es-MX")} · {sale.staff.name}{sale.customerName ? ` · ${sale.customerName}` : ""}</small><span className={`retail-badge ${sale.status.toLowerCase()}`}>{sale.status === "SYNCED" ? "Shopify sincronizado" : sale.status === "REFUNDED" ? "Reembolsado" : "Pendiente"}</span>{sale.errorMessage ? <div className="retail-alert warning">{sale.errorMessage}</div> : null}<div className="retail-sale-actions"><button onClick={() => printSale(sale)}>Reimprimir</button>{sale.status === "SYNCED" ? <button className="danger" disabled={busy} onClick={() => refundSale(sale)}>Reembolsar y reponer</button> : null}{sale.status === "PENDING_SYNC" ? <button disabled={busy} onClick={() => retrySale(sale)}>Reintentar</button> : null}</div></article>)}</> : null}
