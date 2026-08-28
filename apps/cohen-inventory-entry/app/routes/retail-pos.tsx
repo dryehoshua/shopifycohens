@@ -109,7 +109,17 @@ type Sale = {
   refundedByName?: string | null;
 };
 type StaffMember = { id: string; name: string; role: string; active: boolean };
-type Drawer = "orders" | "shift" | "staff" | "customers" | null;
+type SuspendedSale = {
+  id: string;
+  createdAt: string;
+  cart: CartLine[];
+  customer: Customer | null;
+  member: Member | null;
+  credential: string;
+  discountAmount: string;
+  nekudotAmount: string;
+};
+type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | null;
 
 type UsbEndpoint = { direction: string; endpointNumber: number };
 type UsbAlternate = { alternateSetting: number; endpoints: UsbEndpoint[] };
@@ -234,6 +244,9 @@ export default function RetailPos() {
   const [message, setMessage] = useState<{ tone: string; text: string } | null>(null);
   const [drawer, setDrawer] = useState<Drawer>(null);
   const [search, setSearch] = useState("");
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [scanQuantity, setScanQuantity] = useState(1);
+  const [lastScannedVariantId, setLastScannedVariantId] = useState<string | null>(null);
   const [vendor, setVendor] = useState("Todos");
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -251,6 +264,8 @@ export default function RetailPos() {
   const [staffPin, setStaffPin] = useState("");
   const [printerName, setPrinterName] = useState("");
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [suspendedSales, setSuspendedSales] = useState<SuspendedSale[]>([]);
+  const [suspendedLoaded, setSuspendedLoaded] = useState(false);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
   const searchRef = useRef<HTMLInputElement>(null);
@@ -278,14 +293,36 @@ export default function RetailPos() {
     usb.getDevices().then((devices) => { if (devices[0]) setPrinterName(devices[0].productName || "Impresora autorizada"); }).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => searchRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("cohens-retail-suspended-sales");
+      if (stored) setSuspendedSales(JSON.parse(stored) as SuspendedSale[]);
+    } catch {
+      setMessage({ tone: "warning", text: "No se pudieron recuperar las ventas en espera de esta terminal." });
+    } finally {
+      setSuspendedLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!suspendedLoaded) return;
+    window.localStorage.setItem("cohens-retail-suspended-sales", JSON.stringify(suspendedSales));
+  }, [suspendedLoaded, suspendedSales]);
+
   const vendors = useMemo(() => ["Todos", ...new Set(products.map((product) => product.vendor).filter(Boolean))], [products]);
-  const normalizedSearch = search.trim().toLocaleLowerCase("es-MX");
+  const normalizedSearch = catalogSearch.trim().toLocaleLowerCase("es-MX");
   const visibleProducts = useMemo(() => products.filter((product) => {
     if (vendor !== "Todos" && product.vendor !== vendor) return false;
     if (!normalizedSearch) return true;
     return [product.title, product.vendor, product.productType, ...product.variants.flatMap((variant) => [variant.sku || "", variant.barcode || "", variant.title])]
       .some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedSearch));
   }), [products, vendor, normalizedSearch]);
+  const quickVariants = useMemo(() => products.flatMap((product) => product.variants.slice(0, 1).map((variant) => ({ product, variant }))).slice(0, 12), [products]);
   const grossCents = useMemo(() => cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0), [cart]);
   const discountCents = Math.min(moneyInputCents(discountAmount), Math.max(0, grossCents - 1));
   const afterDiscountCents = grossCents - discountCents;
@@ -294,15 +331,20 @@ export default function RetailPos() {
   const amountDueCents = afterDiscountCents - appliedNekudotCents;
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
-  function add(product: Product, variant: Variant) {
+  function add(product: Product, variant: Variant, amount = 1) {
     if (variant.tracked && variant.available < 1) return;
+    const safeAmount = Math.max(1, Math.min(99, Math.trunc(amount)));
     setCart((current) => {
       const index = current.findIndex((line) => line.variant.id === variant.id);
-      if (index === -1) return [...current, { product, variant, quantity: 1 }];
-      const nextQuantity = current[index].quantity + 1;
+      if (index === -1) {
+        if (variant.tracked && safeAmount > variant.available) return current;
+        return [...current, { product, variant, quantity: safeAmount }];
+      }
+      const nextQuantity = current[index].quantity + safeAmount;
       if (variant.tracked && nextQuantity > variant.available) return current;
       const next = [...current]; next[index] = { ...next[index], quantity: nextQuantity }; return next;
     });
+    setLastScannedVariantId(variant.id);
   }
 
   function changeQuantity(variantId: string, delta: number) {
@@ -320,9 +362,57 @@ export default function RetailPos() {
     const exact = products.flatMap((product) => product.variants.map((variant) => ({ product, variant })))
       .find(({ variant }) => variant.barcode === search.trim() || variant.sku === search.trim());
     if (exact) {
-      add(exact.product, exact.variant); setSearch(""); setMessage({ tone: "success", text: `${exact.product.title} agregado.` });
+      add(exact.product, exact.variant, scanQuantity); setSearch(""); setScanQuantity(1); setMessage({ tone: "success", text: `${scanQuantity} × ${exact.product.title} agregado.` });
       window.requestAnimationFrame(() => searchRef.current?.focus());
+    } else if (search.trim()) {
+      setCatalogSearch(search.trim()); setSearch(""); setDrawer("catalog");
+      setMessage({ tone: "info", text: "Código no exacto. Revisa las coincidencias del catálogo Shopify." });
     }
+  }
+
+  function clearCurrentSale() {
+    setCart([]); setCustomer(null); setMember(null); setCredential(""); setNekudotAmount("0"); setDiscountAmount("0"); setLastScannedVariantId(null);
+    saleKey.current = newSaleKey();
+  }
+
+  function suspendCurrentSale() {
+    if (!cart.length) return;
+    const suspended: SuspendedSale = {
+      id: `espera-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      cart,
+      customer,
+      member,
+      credential,
+      discountAmount,
+      nekudotAmount,
+    };
+    setSuspendedSales((current) => [suspended, ...current].slice(0, 20));
+    clearCurrentSale();
+    setMessage({ tone: "success", text: "Venta puesta en espera. Puedes recuperarla desde En espera." });
+    window.requestAnimationFrame(() => searchRef.current?.focus());
+  }
+
+  function resumeSuspendedSale(suspended: SuspendedSale) {
+    if (cart.length && !window.confirm("La venta actual tiene artículos. ¿Deseas ponerla en espera y recuperar esta venta?")) return;
+    if (cart.length) {
+      setSuspendedSales((current) => [{
+        id: `espera-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        cart,
+        customer,
+        member,
+        credential,
+        discountAmount,
+        nekudotAmount,
+      }, ...current.filter((item) => item.id !== suspended.id)].slice(0, 20));
+    } else {
+      setSuspendedSales((current) => current.filter((item) => item.id !== suspended.id));
+    }
+    setCart(suspended.cart); setCustomer(suspended.customer); setMember(suspended.member); setCredential(suspended.credential);
+    setDiscountAmount(suspended.discountAmount); setNekudotAmount(suspended.nekudotAmount); setDrawer(null); saleKey.current = newSaleKey();
+    setMessage({ tone: "success", text: "Venta recuperada. Continúa escaneando." });
+    window.requestAnimationFrame(() => searchRef.current?.focus());
   }
 
   async function openPrinter(device: UsbDevice) {
@@ -425,8 +515,7 @@ export default function RetailPos() {
           ...(member ? { nekudotCredential: credential, nekudotRedeemAmount: (appliedNekudotCents / 100).toFixed(2) } : {}),
         }),
       });
-      setCart([]); setCustomer(null); setMember(null); setCredential(""); setNekudotAmount("0"); setDiscountAmount("0");
-      saleKey.current = newSaleKey(); setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
+      clearCurrentSale(); setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
       setMessage({ tone: "success", text: `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} registrada en Shopify${result.sale.changeCents ? `. Cambio: ${formatMoney(result.sale.changeCents)}` : ""}.` });
       await printSale(result.sale); await loadData();
     } catch (error) { setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo cobrar." }); }
@@ -513,6 +602,8 @@ export default function RetailPos() {
       <div className="retail-brand"><div className="retail-logo small">C</div><div><h1>Cohen&apos;s Store</h1><small>Retail POS · {initial.staff.name}{initial.staff.role === "MANAGER" ? " · Gerente" : ""}</small></div></div>
       <div className="retail-top-actions">
         <button className="retail-button dark" onClick={connectPrinter}>Impresora <span>{printerName ? "✓" : ""}</span></button>
+        <button className="retail-button dark" onClick={() => setDrawer("catalog")}>Catálogo</button>
+        <button className="retail-button dark" onClick={() => setDrawer("suspended")}>En espera <span className="retail-counter">{suspendedSales.length}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("orders")}>Pedidos</button>
         <button className="retail-button dark" onClick={() => setDrawer("shift")}>Caja</button>
         {initial.staff.role === "MANAGER" ? <button className="retail-button dark" onClick={openStaff}>Equipo</button> : null}
@@ -520,49 +611,70 @@ export default function RetailPos() {
       </div>
     </header>
     <div className="retail-layout">
-      <main className="retail-catalog">
-        <div className="retail-catalog-head"><div><span className="retail-kicker">CATÁLOGO SHOPIFY</span><h2>Productos de tienda</h2></div><span className="retail-sync">{lastUpdatedAt ? `Actualizado ${lastUpdatedAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}` : "Sincronizando…"}</span></div>
-        <form className="retail-search" onSubmit={scanOrSearch}>
-          <span>⌕</span><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Escanea código de barras o busca producto, SKU, marca…" autoComplete="off" /><button>Agregar código</button>
-        </form>
-        <div className="retail-filters">{vendors.slice(0, 12).map((item) => <button key={item} className={vendor === item ? "active" : ""} onClick={() => setVendor(item)}>{item}</button>)}</div>
+      <main className="retail-sale-workspace">
+        <section className="retail-scan-station">
+          <div className="retail-scan-heading"><div><span className="retail-kicker">CAJA DE SUPERMERCADO</span><h2>Escanea el siguiente artículo</h2></div><span className="retail-sync">{lastUpdatedAt ? `Shopify · ${lastUpdatedAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}` : "Sincronizando Shopify…"}</span></div>
+          <form className="retail-search" onSubmit={scanOrSearch}>
+            <span className="retail-scan-icon">▣</span>
+            <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Código de barras, SKU o nombre del producto" autoComplete="off" />
+            <label className="retail-scan-quantity"><span>Cant.</span><input type="number" min="1" max="99" value={scanQuantity} onChange={(event) => setScanQuantity(Math.max(1, Math.min(99, Number(event.target.value) || 1)))} /></label>
+            <button>Agregar</button>
+          </form>
+          <div className="retail-operation-actions">
+            <button onClick={() => setDrawer("catalog")}>⌕ Buscar en catálogo</button>
+            <button disabled={!cart.length} onClick={suspendCurrentSale}>Ⅱ Poner venta en espera</button>
+            <button disabled={!suspendedSales.length} onClick={() => setDrawer("suspended")}>↶ Recuperar venta ({suspendedSales.length})</button>
+            <button className="danger" disabled={!cart.length} onClick={() => { if (window.confirm("¿Cancelar la venta actual?")) clearCurrentSale(); }}>Cancelar venta</button>
+          </div>
+        </section>
         {message ? <div className={`retail-alert ${message.tone}`}>{message.text}</div> : null}
         {!shift ? <div className="retail-alert warning">Abre la caja antes de registrar ventas.</div> : null}
-        <div className="retail-product-grid">{visibleProducts.map((product) => <article className="retail-product" key={product.id}>
-          {product.imageUrl ? <img src={product.imageUrl} alt={product.imageAlt} /> : <div className="retail-placeholder">C</div>}
-          <div className="retail-product-copy"><small>{product.vendor || product.productType || "COHEN'S"}</small><strong>{product.title}</strong>
-            <div className="retail-variants">{product.variants.map((variant) => {
-              const soldOut = variant.tracked && variant.available <= 0;
-              return <button key={variant.id} disabled={soldOut} onClick={() => add(product, variant)}>
-                <span>{variant.title === "Default Title" ? "Agregar" : variant.title}</span><b>{formatMoney(variant.priceCents)}</b><em>{variant.tracked ? (soldOut ? "Agotado" : `${variant.available} en stock`) : "Disponible"}</em>
-              </button>;
-            })}</div>
-          </div>
-        </article>)}</div>
-        {!visibleProducts.length ? <div className="retail-empty"><strong>Sin coincidencias</strong><span>Prueba con otro nombre, SKU o código.</span></div> : null}
-      </main>
-      <aside className="retail-cart">
-        <div className="retail-cart-title"><div><span className="retail-kicker">VENTA ACTUAL</span><h2>{itemCount} {itemCount === 1 ? "artículo" : "artículos"}</h2></div>{cart.length ? <button onClick={() => setCart([])}>Vaciar</button> : null}</div>
-        <section className="retail-customer-card">
-          <div>{customer ? <><strong>{customer.displayName}</strong><small>{customer.email || "Cliente Shopify"}{member ? ` · ${formatMoney(member.availableCents)} Nekudot` : ""}</small></> : <><strong>Cliente ocasional</strong><small>Identifica al cliente para sumar Nekudot</small></>}</div>
-          <button onClick={() => setDrawer("customers")}>{customer ? "Cambiar" : "Agregar"}</button>
+        <section className="retail-basket-panel">
+          <div className="retail-basket-head"><div><span className="retail-kicker">VENTA ACTUAL</span><h2>{itemCount} {itemCount === 1 ? "artículo" : "artículos"}</h2></div><strong>{formatMoney(grossCents)}</strong></div>
+          <div className="retail-basket-columns"><span>Artículo</span><span>Cant.</span><span>Precio</span><span>Importe</span><span /></div>
+          <div className="retail-basket-lines">{cart.length === 0 ? <div className="retail-empty basket"><span className="retail-empty-scan">▣</span><strong>Lista para escanear</strong><span>El lector agrega cada artículo directamente a esta venta.</span></div> : cart.map((line) => <div className={`retail-basket-line ${lastScannedVariantId === line.variant.id ? "latest" : ""}`} key={line.variant.id}>
+            <div className="retail-basket-product"><strong>{line.product.title}</strong><small>{line.variant.title !== "Default Title" ? line.variant.title : line.variant.barcode || line.variant.sku || line.product.vendor || "Producto Shopify"}</small></div>
+            <div className="retail-qty"><button aria-label="Restar uno" onClick={() => changeQuantity(line.variant.id, -1)}>−</button><span>{line.quantity}</span><button aria-label="Sumar uno" onClick={() => changeQuantity(line.variant.id, 1)}>+</button></div>
+            <span>{formatMoney(line.variant.priceCents)}</span><b>{formatMoney(line.variant.priceCents * line.quantity)}</b>
+            <button className="retail-line-remove" aria-label={`Quitar ${line.product.title}`} onClick={() => setCart((current) => current.filter((item) => item.variant.id !== line.variant.id))}>×</button>
+          </div>)}</div>
         </section>
-        <div className="retail-cart-lines">{cart.length === 0 ? <div className="retail-empty compact"><strong>Carrito vacío</strong><span>Escanea o selecciona un producto.</span></div> : cart.map((line) => <div className="retail-cart-line" key={line.variant.id}>
-          <div><strong>{line.product.title}</strong><small>{line.variant.title !== "Default Title" ? line.variant.title : line.variant.sku || line.variant.barcode || "Producto"}</small></div><b>{formatMoney(line.variant.priceCents * line.quantity)}</b>
-          <div className="retail-qty"><button onClick={() => changeQuantity(line.variant.id, -1)}>−</button><span>{line.quantity}</span><button onClick={() => changeQuantity(line.variant.id, 1)}>+</button><button className="remove" onClick={() => setCart((current) => current.filter((item) => item.variant.id !== line.variant.id))}>Quitar</button></div>
-        </div>)}</div>
+        <section className="retail-quick-panel"><div className="retail-quick-heading"><div><span className="retail-kicker">TECLAS RÁPIDAS</span><strong>Productos frecuentes / sin código a la mano</strong></div><button onClick={() => setDrawer("catalog")}>Ver todo</button></div><div className="retail-quick-grid">{quickVariants.map(({ product, variant }) => <button key={variant.id} disabled={variant.tracked && variant.available <= 0} onClick={() => add(product, variant)}><span>{product.title}</span><b>{formatMoney(variant.priceCents)}</b></button>)}</div></section>
+      </main>
+      <aside className="retail-cart retail-checkout">
+        <div className="retail-cart-title"><div><span className="retail-kicker">CLIENTE Y COBRO</span><h2>Finalizar venta</h2></div><span className={`retail-shift-dot ${shift ? "open" : ""}`}>{shift ? "Caja abierta" : "Caja cerrada"}</span></div>
+        <section className="retail-customer-card">
+          <div>{customer ? <><strong>{customer.displayName}</strong><small>{customer.email || "Cliente Shopify"}{member ? ` · ${formatMoney(member.availableCents)} Nekudot` : ""}</small></> : <><strong>¿Tiene tarjeta Cohen&apos;s?</strong><small>Escanéala para sumar 5% de Nekudot</small></>}</div>
+          <button onClick={() => setDrawer("customers")}>{customer ? "Cambiar" : "Leer tarjeta"}</button>
+        </section>
+        <div className={`retail-loyalty-summary ${member ? "active" : ""}`}><span>Nekudot Cohen&apos;s</span>{member ? <><strong>{formatMoney(member.availableCents)} disponibles</strong><small>Esta compra generará aproximadamente {formatMoney(Math.round(amountDueCents * 0.05))} (5%)</small></> : <><strong>5% de regreso</strong><small>Identifica al cliente antes de cobrar.</small></>}</div>
         <section className="retail-adjustments">
           <label>Descuento autorizado<input type="number" min="0" max={(Math.max(0, grossCents - 1) / 100).toFixed(2)} step="0.01" value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} /></label>
           {member ? <label>Usar Nekudot<div><input type="number" min="0" max={(Math.min(afterDiscountCents, member.availableCents) / 100).toFixed(2)} step="0.01" value={nekudotAmount} onChange={(event) => setNekudotAmount(event.target.value)} /><button onClick={() => setNekudotAmount((Math.min(afterDiscountCents, member.availableCents) / 100).toFixed(2))}>Máximo</button></div></label> : null}
         </section>
         <div className="retail-totals">
-          <div><span>Artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>Nekudot</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
-          <div className="grand"><span>A pagar</span><span>{formatMoney(amountDueCents)}</span></div><small>Precios e IVA sincronizados con Shopify</small>
+          <div><span>{itemCount} artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>Nekudot devengados</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
+          <div className="grand"><span>A pagar</span><span>{formatMoney(amountDueCents)}</span></div><small>Pedido, cliente e inventario se registran en Shopify</small>
         </div>
-        <div className="retail-payment-grid"><button className="cash" disabled={busy || !shift || !cart.length} onClick={() => charge("CASH")}>Efectivo</button><button className="card" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}>Terminal</button><button className="split" disabled={busy || !shift || !cart.length || amountDueCents <= 1} onClick={() => charge("SPLIT")}>Pago mixto</button></div>
+        <div className="retail-payment-grid"><button className="cash" disabled={busy || !shift || !cart.length} onClick={() => charge("CASH")}><span>EFECTIVO</span><b>{formatMoney(amountDueCents)}</b></button><button className="card" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}><span>TARJETA</span><b>Terminal</b></button><button className="split" disabled={busy || !shift || !cart.length || amountDueCents <= 1} onClick={() => charge("SPLIT")}><span>PAGO</span><b>Mixto</b></button></div>
       </aside>
     </div>
     {drawer ? <><button type="button" className="retail-drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="retail-drawer"><button className="retail-button secondary" onClick={() => setDrawer(null)}>Cerrar</button>
+      {drawer === "catalog" ? <><span className="retail-kicker">CATÁLOGO SHOPIFY</span><h2>Buscar producto</h2>
+        <input className="retail-catalog-search" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Nombre, SKU, código o marca" />
+        <div className="retail-filters">{vendors.slice(0, 16).map((item) => <button key={item} className={vendor === item ? "active" : ""} onClick={() => setVendor(item)}>{item}</button>)}</div>
+        <div className="retail-product-grid drawer-grid">{visibleProducts.map((product) => <article className="retail-product" key={product.id}>
+          {product.imageUrl ? <img src={product.imageUrl} alt={product.imageAlt} /> : <div className="retail-placeholder">C</div>}
+          <div className="retail-product-copy"><small>{product.vendor || product.productType || "COHEN'S"}</small><strong>{product.title}</strong><div className="retail-variants">{product.variants.map((variant) => {
+            const soldOut = variant.tracked && variant.available <= 0;
+            return <button key={variant.id} disabled={soldOut} onClick={() => { add(product, variant); setDrawer(null); window.requestAnimationFrame(() => searchRef.current?.focus()); }}><span>{variant.title === "Default Title" ? "Agregar" : variant.title}</span><b>{formatMoney(variant.priceCents)}</b><em>{variant.tracked ? (soldOut ? "Agotado" : `${variant.available} en stock`) : "Disponible"}</em></button>;
+          })}</div></div>
+        </article>)}</div>
+        {!visibleProducts.length ? <div className="retail-empty"><strong>Sin coincidencias</strong><span>Prueba con otro nombre, SKU o código.</span></div> : null}
+      </> : null}
+      {drawer === "suspended" ? <><span className="retail-kicker">CONTINUIDAD DE CAJA</span><h2>Ventas en espera</h2>
+        {!suspendedSales.length ? <div className="retail-empty"><strong>No hay ventas en espera</strong><span>Puedes apartar temporalmente una venta sin perder sus artículos ni su cliente.</span></div> : <div className="retail-suspended-list">{suspendedSales.map((suspended) => <article key={suspended.id}><div><strong>{suspended.customer?.displayName || "Cliente ocasional"}</strong><b>{formatMoney(suspended.cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0))}</b></div><small>{new Date(suspended.createdAt).toLocaleString("es-MX")} · {suspended.cart.reduce((sum, line) => sum + line.quantity, 0)} artículos</small><div><button onClick={() => resumeSuspendedSale(suspended)}>Recuperar venta</button><button className="danger" onClick={() => setSuspendedSales((current) => current.filter((item) => item.id !== suspended.id))}>Eliminar</button></div></article>)}</div>}
+      </> : null}
       {drawer === "customers" ? <><span className="retail-kicker">CLIENTES Y NEKUDOT</span><h2>Identificar cliente</h2>
         <div className="retail-member-scan"><strong>¿Tiene tarjeta Cohen&apos;s?</strong><form onSubmit={(event) => { event.preventDefault(); void identifyCredential(credential); }}><input value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="RFID / QR" /><button disabled={busy || credential.length < 4}>Leer</button></form><NfcBridgeReader onCredential={(value) => { void identifyCredential(value); }} /></div>
         {member ? <div className="retail-selected"><strong>{member.displayName}</strong><span>{formatMoney(member.availableCents)} disponible · 5% en esta compra{member.broker ? ` · Broker ${member.broker.displayName}` : ""}</span></div> : null}
