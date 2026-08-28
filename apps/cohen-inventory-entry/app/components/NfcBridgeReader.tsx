@@ -96,13 +96,13 @@ export function NfcBridgeReader({ onCredential, compact = false, className = "" 
     waiting: "Puente activo · buscando ACR122U",
     read: `Tarjeta leída${lastFour ? ` · •••• ${lastFour}` : ""}`,
     disconnected: "Puente NFC no iniciado",
-    error: "No se pudo conectar al lector",
+    error: "Lector local en modo seguro",
   };
   const canRetry = state === "disconnected" || state === "error";
 
   return <div className={`nfc-bridge nfc-${state} ${compact ? "nfc-compact" : ""} ${className}`.trim()} role="status">
     <span className="nfc-signal" aria-hidden="true"><i /><i /><i /></span>
-    <span className="nfc-copy"><strong>{labels[state]}</strong>{!compact ? <small>{canRetry ? "Abre el puente local para usar el ACR122U." : readerName}</small> : null}</span>
+    <span className="nfc-copy"><strong>{labels[state]}</strong>{!compact ? <small>{state === "error" ? "Deja enfocado el campo Nekudot y acerca la tarjeta." : state === "disconnected" ? "Abre el puente local para usar el ACR122U." : readerName}</small> : null}</span>
     {canRetry ? <button type="button" onClick={() => void connect()}>Reintentar</button> : <span className="nfc-dot" aria-hidden="true" />}
   </div>;
 }

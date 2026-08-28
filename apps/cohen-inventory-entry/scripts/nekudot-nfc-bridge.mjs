@@ -15,6 +15,53 @@ const configuredOrigins = String(process.env.NEKUDOT_NFC_ALLOWED_ORIGINS || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const exactOrigins = new Set([productionOrigin, ...configuredOrigins]);
+const keyboardFallbackEnabled = process.env.NEKUDOT_NFC_KEYBOARD_FALLBACK !== "0";
+let lastEventPollAt = 0;
+
+const keyboardFallbackScript = String.raw`
+on run argv
+  set cardUid to item 1 of argv
+  tell application "System Events"
+    try
+      set frontProcess to first application process whose frontmost is true
+      set focusedElement to value of attribute "AXFocusedUIElement" of frontProcess
+      set roleName to value of attribute "AXRole" of focusedElement
+      if roleName is not "AXTextField" and roleName is not "AXComboBox" then return "ignored"
+
+      set hintText to ""
+      try
+        set hintText to value of attribute "AXPlaceholderValue" of focusedElement
+      end try
+      if hintText is missing value then set hintText to ""
+      if hintText does not contain "Escanea" and hintText does not contain "Esperando lectura" then return "ignored"
+
+      keystroke "a" using command down
+      keystroke cardUid
+      key code 36
+      return "typed"
+    on error
+      return "ignored"
+    end try
+  end tell
+end run
+`;
+
+function typeIntoFocusedNekudotField(credential) {
+  if (!keyboardFallbackEnabled || Date.now() - lastEventPollAt < 1_500) return;
+  const helper = spawn("osascript", ["-", credential], { stdio: ["pipe", "pipe", "ignore"] });
+  let output = "";
+  const timeout = setTimeout(() => helper.kill("SIGTERM"), 2_000);
+  timeout.unref();
+  helper.stdout.setEncoding("utf8");
+  helper.stdout.on("data", (chunk) => { output += chunk; });
+  helper.on("exit", () => {
+    clearTimeout(timeout);
+    if (output.trim() === "typed") {
+      process.stdout.write("\u21b3 Lectura enviada al campo Nekudot activo.\n");
+    }
+  });
+  helper.stdin.end(keyboardFallbackScript);
+}
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
@@ -95,6 +142,7 @@ function handleReaderMessage(message) {
     };
     state.error = null;
     process.stdout.write(`\n✓ Tarjeta leída: ${message.uid}\n`);
+    typeIntoFocusedNekudotField(message.uid);
     return;
   }
   if (message.type === "card" && message.status === "removed") {
@@ -161,6 +209,7 @@ const server = createServer((request, response) => {
     return;
   }
   if (request.method === "GET" && url.pathname === "/events") {
+    lastEventPollAt = Date.now();
     const after = Number(url.searchParams.get("after") || 0);
     if (state.lastEvent && state.lastEvent.sequence > after) {
       json(request, response, 200, { ok: true, ...state.lastEvent });

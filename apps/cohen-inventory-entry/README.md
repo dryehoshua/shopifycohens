@@ -117,6 +117,13 @@ Nekudot en Shopify. Las pantallas **Escanear**, **Vincular cliente** y la POS de
 la cafetería detectan el puente automáticamente. Una tarjeta debe retirarse y
 acercarse de nuevo para producir otra lectura.
 
+Shopify Admin puede impedir que su iframe consulte directamente una dirección
+local. En ese caso el puente activa una entrada nativa restringida: solo escribe
+el UID si el elemento enfocado es un campo cuyo texto de ayuda empieza con
+**Escanea** o **Esperando lectura**, y después envía Enter. macOS puede pedir una
+sola vez permiso de Accesibilidad para la terminal o aplicación que inició el
+puente. Se puede desactivar con `NEKUDOT_NFC_KEYBOARD_FALLBACK=0`.
+
 Por seguridad, el puente solo acepta `localhost`, la URL productiva principal
 y los orígenes declarados en `NEKUDOT_NFC_ALLOWED_ORIGINS` (separados por
 coma). Para una segunda app productiva de cafetería, agrega su origen HTTPS a
