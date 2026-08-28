@@ -28,6 +28,7 @@ type Props = {
 
 const REQUIRED_READS = 3;
 const MAC_INSTALLER_URL = "/downloads/cohens-nfc-macos.tar.gz";
+const WINDOWS_INSTALLER_URL = "/downloads/cohens-nfc-windows.cmd";
 const ACS_MAC_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/13549/acsccid-macosx-bin-1.1.11.1-20240826.zip";
 const ACS_WINDOWS_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/9840/ACS-Unified-MSI-4280.rar";
 const ACS_LINUX_DRIVER_URL = "https://www.acs.com.hk/download-driver-unified/14214/acsccid-linux-bin-1.1.11-20240328.zip";
@@ -210,17 +211,18 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
         <small>{computerPlatform === "mac"
           ? "Detectamos una Mac. Descarga el instalador, descomprímelo y abre el archivo .command; el lector quedará activo también después de reiniciar."
           : computerPlatform === "windows"
-            ? "Detectamos Windows. Instala el controlador oficial ACS para habilitar el hardware. El instalador automático del puente Cohen's está disponible por ahora en Mac."
-            : "Elige el controlador oficial de tu sistema. En Mac, el paquete Cohen's instala además el puente de la POS."}</small>
+            ? "Detectamos Windows. Descarga y abre el instalador .cmd: configura el puente Cohen's, PC/SC y el inicio automático sin pedir permisos de administrador."
+            : "Elige el instalador completo de tu sistema. Windows y Mac incluyen el puente local de la POS y el inicio automático."}</small>
       </div>
       <div className="nfc-install-actions">
+        <a className={computerPlatform === "windows" ? "primary" : ""} href={WINDOWS_INSTALLER_URL} download>Instalar en Windows</a>
         <a className={computerPlatform === "mac" ? "primary" : ""} href={MAC_INSTALLER_URL} download>Instalar en Mac</a>
-        <a className={computerPlatform === "windows" ? "primary" : ""} href={ACS_WINDOWS_DRIVER_URL} target="_blank" rel="noreferrer">Driver Windows</a>
+        <a href={ACS_WINDOWS_DRIVER_URL} target="_blank" rel="noreferrer">Driver ACS manual</a>
         <a href={ACS_MAC_DRIVER_URL} target="_blank" rel="noreferrer">Driver macOS</a>
         <a href={ACS_LINUX_DRIVER_URL} target="_blank" rel="noreferrer">Driver Linux</a>
       </div>
       <ol className="nfc-install-steps">
-        <li><b>Descarga</b> el instalador o driver correspondiente.</li>
+        <li><b>Descarga</b> y abre el instalador de tu sistema.</li>
         <li><b>Conecta</b> el ACR122U directamente al USB.</li>
         <li><b>Vuelve aquí</b> e inicia la prueba de tres lecturas.</li>
       </ol>

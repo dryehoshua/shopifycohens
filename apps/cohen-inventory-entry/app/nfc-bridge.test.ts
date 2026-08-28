@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   nfcBridgeEventCredential,
@@ -52,4 +54,18 @@ test("rechaza identificadores inconsistentes durante la prueba", () => {
   assert.equal(result.scans, "fail");
   assert.equal(result.stableCredential, null);
   assert.equal(result.passed, false);
+});
+
+test("el instalador Windows verifica exactamente el PowerShell publicado", () => {
+  const command = readFileSync(new URL("../public/downloads/cohens-nfc-windows.cmd", import.meta.url), "utf8");
+  const installer = readFileSync(new URL("../public/downloads/windows/install-cohens-nfc-windows.ps1", import.meta.url));
+  const installerText = installer.toString("utf8");
+  const readerSource = readFileSync(new URL("../public/downloads/windows/acr122u-reader-windows.cs", import.meta.url));
+  const expectedHash = command.match(/COHENS_NFC_INSTALLER_SHA256=([A-F0-9]{64})/)?.[1];
+  const actualHash = createHash("sha256").update(installer).digest("hex").toUpperCase();
+  const expectedReaderHash = installerText.match(/\$ReaderSourceSha256 = "([A-F0-9]{64})"/)?.[1];
+  const actualReaderHash = createHash("sha256").update(readerSource).digest("hex").toUpperCase();
+  assert.equal(expectedHash, actualHash);
+  assert.equal(expectedReaderHash, actualReaderHash);
+  assert.match(command, /Get-FileHash -Algorithm SHA256/);
 });

@@ -47,21 +47,45 @@ on run argv
 end run
 `;
 
+const windowsKeyboardFallbackScript = String.raw`
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName System.Windows.Forms
+$element = [System.Windows.Automation.AutomationElement]::FocusedElement
+if ($null -eq $element) { Write-Output "ignored"; exit 0 }
+$description = @($element.Current.Name, $element.Current.AutomationId, $element.Current.HelpText) -join " "
+if ($description -notmatch "(?i)(esperando lectura|escanea|rfid|qr|nekudot|entrada de prueba)") {
+  Write-Output "ignored"
+  exit 0
+}
+[System.Windows.Forms.SendKeys]::SendWait($env:COHENS_NFC_UID)
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+Write-Output "typed"
+`;
+
 function typeIntoFocusedNekudotField(credential) {
   if (!keyboardFallbackEnabled || Date.now() - lastEventPollAt < 1_500) return;
-  const helper = spawn("osascript", ["-", credential], { stdio: ["pipe", "pipe", "ignore"] });
+  if (process.platform !== "darwin" && process.platform !== "win32") return;
+  const windows = process.platform === "win32";
+  const helper = windows
+    ? spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", windowsKeyboardFallbackScript], {
+        env: { ...process.env, COHENS_NFC_UID: credential },
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+    : spawn("osascript", ["-", credential], { stdio: ["pipe", "pipe", "ignore"] });
   let output = "";
-  const timeout = setTimeout(() => helper.kill("SIGTERM"), 2_000);
+  const timeout = setTimeout(() => helper.kill("SIGTERM"), windows ? 4_000 : 2_000);
   timeout.unref();
   helper.stdout.setEncoding("utf8");
   helper.stdout.on("data", (chunk) => { output += chunk; });
+  helper.on("error", () => clearTimeout(timeout));
   helper.on("exit", () => {
     clearTimeout(timeout);
     if (output.trim() === "typed") {
       process.stdout.write("\u21b3 Lectura enviada al campo Nekudot activo.\n");
     }
   });
-  helper.stdin.end(keyboardFallbackScript);
+  if (!windows) helper.stdin.end(keyboardFallbackScript);
 }
 
 function isAllowedOrigin(origin) {
