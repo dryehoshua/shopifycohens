@@ -137,7 +137,9 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
           if (!active) return;
           setHealth(null);
           setLatencyMs(null);
-          setBridgeError(error instanceof Error ? error.message : "No se pudo conectar con el puente local.");
+          setBridgeError(error instanceof TypeError
+            ? "Modo seguro del navegador · esperando lectura por teclado"
+            : error instanceof Error ? error.message : "No se pudo conectar con el puente local.");
         }
         await wait(450);
       }
@@ -150,7 +152,7 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
     () => summarizeNfcReaderTest(health, reads.map((read) => read.credential), REQUIRED_READS),
     [health, reads],
   );
-  const bridgeStatus: NfcReaderTestState = keyboardFallbackObserved ? "pass" : bridgeError ? "fail" : summary.bridge;
+  const bridgeStatus: NfcReaderTestState = keyboardFallbackObserved ? "pass" : bridgeError ? "pending" : summary.bridge;
   const readerStatus: NfcReaderTestState = keyboardFallbackObserved ? "pass" : summary.reader;
   const testPassed = bridgeStatus === "pass" && readerStatus === "pass" && summary.scans === "pass";
   const readerReady = Boolean(health?.readerConnected) && !bridgeError;
@@ -196,7 +198,7 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
         <span>1</span><div><strong>Puente local</strong><small>{bridgeError || (latencyMs ? `Activo · respuesta ${latencyMs} ms` : "Conectando…")}</small></div><b>{statusLabel(bridgeStatus)}</b>
       </article>
       <article className={`nfc-check ${readerStatus}`}>
-        <span>2</span><div><strong>Lector físico</strong><small>{keyboardFallbackObserved ? "Lectura recibida por el puente en modo seguro" : health?.readerConnected ? health.reader || "Lector PC/SC conectado" : "Conecta el ACR122U por USB"}</small></div><b>{statusLabel(readerStatus)}</b>
+        <span>2</span><div><strong>Lector físico</strong><small>{keyboardFallbackObserved ? "Lectura recibida por el puente en modo seguro" : health?.readerConnected ? health.reader || "Lector PC/SC conectado" : bridgeError ? "La primera lectura confirmará el ACR122U" : "Conecta el ACR122U por USB"}</small></div><b>{statusLabel(readerStatus)}</b>
       </article>
       <article className={`nfc-check ${summary.scans}`}>
         <span>3</span><div><strong>UID estable</strong><small>{summary.scans === "pass" ? `Mismo ID leído ${REQUIRED_READS} veces` : summary.scans === "fail" ? "Se detectaron IDs distintos; repite con una sola tarjeta" : `${reads.length}/${REQUIRED_READS} lecturas completadas`}</small></div><b>{statusLabel(summary.scans)}</b>
@@ -209,7 +211,7 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
         <strong>{running ? "Acerca la misma tarjeta" : testPassed ? "La tarjeta respondió correctamente" : "Listo para iniciar"}</strong>
         <small>{running ? "Retírala después de cada lectura y vuelve a acercarla." : readerReady ? "La prueba solicitará tres lecturas consecutivas." : "También funciona con la entrada segura del puente local."}</small>
       </div>
-      <button type="button" disabled={running} onClick={startTest}>{testPassed || reads.length ? "Repetir prueba" : "Iniciar prueba"}</button>
+      <button type="button" disabled={running} onClick={startTest}>{running ? "Leyendo…" : testPassed || reads.length ? "Repetir prueba" : "Iniciar prueba"}</button>
     </div>
 
     <div className="nfc-read-progress" aria-label={`${reads.length} de ${REQUIRED_READS} lecturas`}>
@@ -219,7 +221,7 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
     {running ? <form className="nfc-keyboard-fallback" onSubmit={submitFallback}>
       <label htmlFor="nfc-diagnostic-input">Entrada de prueba</label>
       <input id="nfc-diagnostic-input" ref={fallbackInputRef} value={fallbackCredential} onChange={(event) => setFallbackCredential(event.target.value)} placeholder="Esperando lectura de prueba…" autoComplete="off" />
-      <small>Mantén este campo enfocado. En modo seguro, el puente local escribirá aquí el UID automáticamente.</small>
+      <small>Mantén este campo enfocado y no escribas el UID. El puente local lo colocará aquí automáticamente.</small>
     </form> : null}
 
     {reads.length ? <div className="nfc-read-history">
