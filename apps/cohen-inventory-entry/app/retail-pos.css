@@ -1,0 +1,155 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f2f0e9;
+  color: #172a23;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: #f2f0e9; }
+button, input, textarea { font: inherit; }
+button { touch-action: manipulation; }
+
+.retail-shell { min-height: 100vh; }
+.retail-topbar {
+  position: sticky; top: 0; z-index: 20; display: flex; align-items: center;
+  justify-content: space-between; gap: 16px; min-height: 68px; padding: 10px 18px;
+  color: white; background: #173f32; box-shadow: 0 3px 16px rgb(17 52 41 / 20%);
+}
+.retail-brand { display: flex; align-items: center; gap: 11px; }
+.retail-brand h1 { margin: 0; font-family: Georgia, serif; font-size: 20px; letter-spacing: .01em; }
+.retail-brand small { display: block; color: #bfd1c9; margin-top: 2px; }
+.retail-logo { display: grid; place-items: center; width: 54px; height: 54px; border: 2px solid #d5a24b; border-radius: 50%; color: #173f32; background: #f8f4e9; font: 900 30px Georgia, serif; box-shadow: inset 0 0 0 4px #f8f4e9, inset 0 0 0 5px #d5a24b; }
+.retail-logo.small { width: 40px; height: 40px; font-size: 22px; }
+.retail-top-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+.retail-button { border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; font-weight: 800; }
+.retail-button:disabled, button:disabled { cursor: not-allowed; opacity: .48; }
+.retail-button.primary { color: white; background: #237153; }
+.retail-button.secondary { color: #24443a; background: #e4ebe7; }
+.retail-button.dark { color: white; background: #245343; border: 1px solid #477466; }
+.retail-button.danger { color: white; background: #9b3d34; }
+.retail-button.wide { width: 100%; padding: 14px; }
+
+.retail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 410px; min-height: calc(100vh - 68px); }
+.retail-catalog { min-width: 0; padding: 22px; }
+.retail-catalog-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.retail-catalog-head h2 { margin: 3px 0 0; font-family: Georgia, serif; font-size: 27px; }
+.retail-kicker { color: #7a7d73; font-size: 10px; font-weight: 900; letter-spacing: .14em; }
+.retail-sync { color: #68746e; font-size: 12px; }
+.retail-search { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; margin-top: 16px; padding: 8px; border: 1px solid #d6d7cf; border-radius: 14px; background: white; box-shadow: 0 4px 18px rgb(37 59 49 / 6%); }
+.retail-search > span { padding-left: 8px; color: #567067; font-size: 24px; }
+.retail-search input { min-width: 0; border: 0; outline: 0; padding: 10px 4px; color: #172a23; background: transparent; }
+.retail-search button { border: 0; border-radius: 9px; padding: 10px 13px; color: white; background: #237153; font-weight: 800; cursor: pointer; }
+.retail-filters { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0 16px; padding-bottom: 2px; }
+.retail-filters button { flex: 0 0 auto; border: 1px solid #ccd2ce; border-radius: 999px; padding: 7px 12px; color: #405c52; background: #faf9f5; cursor: pointer; }
+.retail-filters button.active { border-color: #237153; color: white; background: #237153; }
+
+.retail-product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.retail-product { overflow: hidden; border: 1px solid #dedfd8; border-radius: 15px; background: white; box-shadow: 0 5px 18px rgb(35 61 50 / 6%); }
+.retail-product > img, .retail-placeholder { display: block; width: 100%; aspect-ratio: 5/3; object-fit: cover; background: #e4e6df; }
+.retail-placeholder { display: grid; place-items: center; color: #c6a15a; font: 900 40px Georgia, serif; background: linear-gradient(135deg, #e8ece7, #f7f5ec); }
+.retail-product-copy { padding: 12px; }
+.retail-product-copy > small { display: block; overflow: hidden; color: #8b7960; font-size: 9px; font-weight: 900; letter-spacing: .1em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.retail-product-copy > strong { display: block; min-height: 38px; margin: 5px 0 8px; line-height: 1.25; }
+.retail-variants { display: grid; gap: 6px; }
+.retail-variants button { display: grid; grid-template-columns: 1fr auto; gap: 3px 7px; width: 100%; border: 1px solid #d8ddd9; border-radius: 9px; padding: 8px; text-align: left; color: #1d372e; background: #f8faf8; cursor: pointer; }
+.retail-variants button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.retail-variants button b { color: #1e5f47; }
+.retail-variants button em { grid-column: 1 / -1; color: #6b766f; font-size: 11px; font-style: normal; }
+
+.retail-cart { position: sticky; top: 68px; height: calc(100vh - 68px); overflow: auto; padding: 19px; border-left: 1px solid #d9d9d1; background: white; box-shadow: -5px 0 18px rgb(30 55 45 / 4%); }
+.retail-cart-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.retail-cart-title h2 { margin: 3px 0 0; font-family: Georgia, serif; }
+.retail-cart-title > button { border: 0; color: #8d3832; background: transparent; cursor: pointer; }
+.retail-customer-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; padding: 12px; border: 1px solid #e0c991; border-radius: 12px; background: #fff9e9; }
+.retail-customer-card strong, .retail-customer-card small { display: block; }
+.retail-customer-card small { margin-top: 3px; color: #796543; }
+.retail-customer-card button { border: 0; color: #245f49; background: transparent; font-weight: 900; cursor: pointer; }
+.retail-cart-lines { max-height: 36vh; overflow: auto; }
+.retail-cart-line { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; padding: 11px 0; border-bottom: 1px solid #e9ebe7; }
+.retail-cart-line small { display: block; margin-top: 3px; color: #758079; }
+.retail-qty { grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; }
+.retail-qty button { width: 32px; height: 32px; border: 0; border-radius: 8px; color: #294b3e; background: #e8eeeb; font-weight: 900; cursor: pointer; }
+.retail-qty .remove { width: auto; margin-left: auto; padding: 0 9px; color: #923d35; background: #f8e9e7; }
+.retail-adjustments { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; }
+.retail-adjustments label { display: grid; gap: 5px; color: #66746e; font-size: 11px; font-weight: 800; }
+.retail-adjustments input { min-width: 0; width: 100%; border: 1px solid #ccd4cf; border-radius: 8px; padding: 9px; }
+.retail-adjustments label > div { display: grid; grid-template-columns: 1fr auto; gap: 5px; }
+.retail-adjustments button { border: 0; border-radius: 8px; color: #245f49; background: #e3eee9; font-size: 11px; font-weight: 900; }
+.retail-totals { display: grid; gap: 7px; margin: 16px 0; }
+.retail-totals > div { display: flex; justify-content: space-between; }
+.retail-totals .deduction { color: #267152; }
+.retail-totals .grand { margin-top: 3px; padding-top: 10px; border-top: 2px solid #1e4436; font-size: 23px; font-weight: 900; }
+.retail-totals > small { color: #7b847f; text-align: right; }
+.retail-payment-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+.retail-payment-grid button { min-height: 52px; border: 0; border-radius: 11px; color: white; font-weight: 900; cursor: pointer; }
+.retail-payment-grid .cash { background: #237153; }
+.retail-payment-grid .card { background: #245b79; }
+.retail-payment-grid .split { color: #263e35; background: #d9dfdb; }
+
+.retail-alert { margin: 12px 0; padding: 10px 12px; border-radius: 10px; }
+.retail-alert.error { color: #7d2019; background: #fce4e1; }
+.retail-alert.success { color: #19583b; background: #dcf2e5; }
+.retail-alert.warning { color: #765400; background: #fff0c4; }
+.retail-alert.info { color: #28517e; background: #e6eef8; }
+.retail-empty { display: grid; place-items: center; gap: 6px; min-height: 180px; color: #7b837f; text-align: center; }
+.retail-empty.compact { min-height: 100px; }
+
+.retail-drawer-backdrop { position: fixed; inset: 68px 0 0; z-index: 29; border: 0; background: rgb(10 30 23 / 34%); cursor: pointer; }
+.retail-drawer { position: fixed; inset: 68px 0 0 auto; z-index: 30; width: min(540px, 100%); overflow: auto; padding: 22px; background: white; box-shadow: -10px 0 35px rgb(9 31 23 / 22%); }
+.retail-drawer > h2 { margin: 5px 0 18px; font-family: Georgia, serif; font-size: 27px; }
+.retail-drawer > .retail-button:first-child { float: right; }
+.retail-member-scan { clear: both; padding: 14px; border: 1px solid #dec68c; border-radius: 12px; background: #fff9e9; }
+.retail-member-scan form, .retail-customer-search { display: grid; grid-template-columns: 1fr auto; gap: 7px; margin: 10px 0; }
+.retail-member-scan input, .retail-customer-search input { min-width: 0; border: 1px solid #ccd4cf; border-radius: 9px; padding: 11px; }
+.retail-member-scan button, .retail-customer-search button { border: 0; border-radius: 9px; padding: 10px 13px; color: white; background: #237153; font-weight: 800; }
+.retail-selected { display: grid; gap: 4px; margin: 12px 0; padding: 13px; border-radius: 11px; color: #1b543b; background: #e3f2e9; }
+.retail-customer-results { display: grid; gap: 7px; margin-bottom: 14px; }
+.retail-customer-results > button { display: grid; gap: 4px; border: 1px solid #dce1dd; border-radius: 10px; padding: 11px; text-align: left; color: #1d382e; background: #fafbfa; cursor: pointer; }
+.retail-customer-results span { color: #718079; font-size: 12px; }
+.retail-sale { margin-bottom: 10px; padding: 13px; border: 1px solid #dfe3df; border-radius: 12px; }
+.retail-sale > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
+.retail-sale > small { display: block; margin: 5px 0 9px; color: #76817b; }
+.retail-badge { display: inline-block; border-radius: 999px; padding: 4px 8px; color: #1f6848; background: #dff0e6; font-size: 11px; font-weight: 900; }
+.retail-badge.pending_sync { color: #735200; background: #fff0c5; }
+.retail-badge.refunded { color: #7d2d27; background: #f8e3e1; }
+.retail-sale-actions { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+.retail-sale-actions button, .retail-staff-list button { border: 0; border-radius: 8px; padding: 8px 10px; color: #245343; background: #e5ede9; font-weight: 800; cursor: pointer; }
+.retail-sale-actions button.danger { color: #8c312a; background: #f7e5e2; }
+.retail-field { display: grid; gap: 6px; margin: 12px 0; color: #53675f; font-weight: 700; }
+.retail-field input, .retail-field textarea { width: 100%; border: 1px solid #cbd4cf; border-radius: 10px; padding: 12px; background: white; }
+.retail-staff-list { margin-top: 18px; }
+.retail-staff-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid #e7eae8; }
+.retail-staff-list small { display: block; color: #758079; }
+
+.retail-login { min-height: 100vh; display: grid; place-items: center; padding: 22px; background: radial-gradient(circle at top, #4e7868, #173f32 55%); }
+.retail-login-card { width: min(420px, 100%); padding: 32px; border-radius: 22px; background: #fbfaf6; box-shadow: 0 25px 75px rgb(2 24 16 / 38%); text-align: center; }
+.retail-login-card .retail-logo { margin: 0 auto 16px; }
+.retail-login-card h1 { margin: 5px 0; font: 700 32px Georgia, serif; }
+.retail-login-card p { color: #64736c; }
+.retail-login-card .retail-field { text-align: left; }
+.retail-pin { font-size: 28px; letter-spacing: .35em; text-align: center; }
+
+@media (max-width: 980px) {
+  .retail-layout { grid-template-columns: minmax(0, 1fr) 360px; }
+  .retail-product-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .retail-layout { display: block; padding-bottom: 370px; }
+  .retail-cart { position: fixed; inset: auto 0 0; z-index: 15; width: auto; height: 370px; border-top: 2px solid #cdd6d1; border-left: 0; box-shadow: 0 -10px 32px rgb(18 54 41 / 15%); }
+  .retail-cart-lines { max-height: 90px; }
+  .retail-top-actions .retail-button { padding: 8px 9px; font-size: 12px; }
+  .retail-catalog { padding: 14px; }
+}
+
+@media (max-width: 480px) {
+  .retail-brand small { display: none; }
+  .retail-brand h1 { font-size: 17px; }
+  .retail-product-grid { grid-template-columns: 1fr 1fr; gap: 9px; }
+  .retail-product-copy { padding: 9px; }
+  .retail-search button { display: none; }
+  .retail-search { grid-template-columns: auto 1fr; }
+  .retail-adjustments { grid-template-columns: 1fr; }
+}

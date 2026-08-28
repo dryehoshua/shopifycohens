@@ -391,6 +391,123 @@ model CafeSale {
   @@index([nekudotRedemptionId])
 }
 
+/// Empleado autorizado para operar la POS de tienda. Se mantiene separado del
+/// personal y los turnos de cafetería porque los permisos operativos difieren.
+model RetailStaff {
+  id             String   @id @default(cuid())
+  shop           String
+  name           String
+  normalizedName String
+  pinSalt        String
+  pinHash         String
+  role           String   @default("CASHIER")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions RetailPosSession[]
+  shifts   RetailRegisterShift[]
+  sales    RetailSale[]
+
+  @@unique([shop, normalizedName])
+  @@index([shop, active, name])
+}
+
+/// Sesión independiente de la POS de tienda. El token original solo vive en
+/// una cookie HttpOnly y la base conserva su hash.
+model RetailPosSession {
+  id         String      @id @default(cuid())
+  shop       String
+  tokenHash  String      @unique
+  staffId    String
+  staff      RetailStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now())
+  lastSeenAt DateTime    @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([shop, expiresAt])
+  @@index([staffId, revokedAt])
+}
+
+/// Turno de la caja retail. Efectivo y terminal se concilian por separado,
+/// incluyendo pagos mixtos.
+model RetailRegisterShift {
+  id                    String      @id @default(cuid())
+  shop                  String
+  staffId               String
+  staff                 RetailStaff @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  status                String      @default("OPEN")
+  openedAt              DateTime    @default(now())
+  openingCashCents      Int         @default(0)
+  closedAt              DateTime?
+  closingCashCents      Int?
+  expectedCashCents     Int?
+  cashVarianceCents     Int?
+  terminalCountedCents  Int?
+  terminalExpectedCents Int?
+  terminalVarianceCents Int?
+  notes                 String?
+
+  sales RetailSale[]
+
+  @@index([shop, status, openedAt])
+  @@index([staffId, openedAt])
+}
+
+/// Venta retail local e idempotente. Shopify conserva el pedido oficial y el
+/// inventario; este registro protege contra cobros o pedidos duplicados.
+model RetailSale {
+  id                   String              @id @default(cuid())
+  shop                 String
+  idempotencyKey       String
+  status               String              @default("PENDING")
+  staffId              String
+  staff                RetailStaff         @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  shiftId              String
+  shift                RetailRegisterShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  paymentMethod        String
+  externalReference    String?
+  grossCents           Int
+  discountCents        Int                 @default(0)
+  subtotalCents        Int
+  taxCents             Int                 @default(0)
+  totalCents           Int
+  cashPaidCents        Int                 @default(0)
+  terminalPaidCents    Int                 @default(0)
+  cashReceivedCents    Int?
+  changeCents          Int                 @default(0)
+  currencyCode         String              @default("MXN")
+  items                Json
+  customerId           String?
+  customerName         String?
+  customerEmail        String?
+  shopifyOrderId       String?
+  shopifyOrderName     String?
+  errorMessage         String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  syncedAt             DateTime?
+  lastPrintedAt        DateTime?
+  printCount           Int                 @default(0)
+  refundedAt           DateTime?
+  refundedByName       String?
+  shopifyRefundId      String?
+  refundIdempotencyKey String?             @unique
+  nekudotMemberId      String?
+  nekudotRedemptionId  String?
+  nekudotRedeemedCents Int                 @default(0)
+
+  @@unique([shop, idempotencyKey])
+  @@index([shop, createdAt])
+  @@index([shop, status, createdAt])
+  @@index([shiftId, createdAt])
+  @@index([shopifyOrderId])
+  @@index([customerId])
+  @@index([nekudotMemberId])
+  @@index([nekudotRedemptionId])
+}
+
 /// Miembro único del programa Nekudot Cohen's. Su wallet se comparte entre
 /// todas las tiendas Shopify conectadas al mismo backend.
 model NekudotMember {
