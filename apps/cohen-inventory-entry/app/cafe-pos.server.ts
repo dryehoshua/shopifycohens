@@ -12,10 +12,13 @@ import {
   type CafeReceiptItem,
 } from "./cafe-pos-domain";
 import {
+  bindNekudotCredential,
   cancelNekudotReservation,
   lookupNekudotMember,
+  replaceNekudotCredential,
   renewNekudotReservation,
   reserveNekudot,
+  searchShopifyCustomers,
 } from "./nekudot.server";
 import { parseNekudotMoney } from "./nekudot-domain";
 
@@ -314,6 +317,119 @@ async function graphql<T>(admin: GraphqlAdmin, query: string, variables: Record<
   return payload.data;
 }
 
+async function resolveCafeCustomer(admin: GraphqlAdmin, customerId: unknown) {
+  const id = String(customerId ?? "").trim();
+  if (!id) return null;
+  if (!/^gid:\/\/shopify\/Customer\/\d+$/.test(id)) {
+    throw new CafePosError("El cliente de Shopify no es válido.", 400, "CUSTOMER_INVALID");
+  }
+  const data = await graphql<{
+    customer: {
+      id: string;
+      displayName: string;
+      defaultEmailAddress: { emailAddress: string } | null;
+    } | null;
+  }>(admin, `#graphql
+    query CafePosCustomer($id: ID!) {
+      customer(id: $id) { id displayName defaultEmailAddress { emailAddress } }
+    }
+  `, { id });
+  if (!data.customer) {
+    throw new CafePosError("Shopify no encontró al cliente.", 404, "CUSTOMER_NOT_FOUND");
+  }
+  return {
+    id: data.customer.id,
+    name: data.customer.displayName || "Cliente sin nombre",
+    email: data.customer.defaultEmailAddress?.emailAddress?.trim() || null,
+  };
+}
+
+export async function searchCafeCustomers(request: Request, search: string) {
+  const session = await currentCafeSession(request);
+  const { admin } = await adminContext();
+  const customers = await searchShopifyCustomers(admin, search);
+  const identities = customers.length
+    ? await db.nekudotCustomerIdentity.findMany({
+        where: {
+          shop: session!.shop,
+          shopifyCustomerId: { in: customers.map((customer) => customer.id) },
+        },
+        include: {
+          member: {
+            include: {
+              broker: true,
+              credentials: { where: { active: true }, orderBy: { updatedAt: "desc" } },
+            },
+          },
+        },
+      })
+    : [];
+  const byCustomerId = new Map(identities.map((identity) => [identity.shopifyCustomerId, identity.member]));
+  return customers.map((customer) => {
+    const member = byCustomerId.get(customer.id);
+    return {
+      ...customer,
+      member: member?.active
+        ? {
+            id: member.id,
+            availableCents: member.balanceCents - member.reservedCents,
+            balanceCents: member.balanceCents,
+            reservedCents: member.reservedCents,
+            credentialCount: member.credentials.length,
+            credentialLastFour: member.credentials[0]?.lastFour ?? null,
+            broker: member.broker
+              ? { displayName: member.broker.displayName, code: member.broker.code }
+              : null,
+          }
+        : null,
+    };
+  });
+}
+
+export async function assignCafeCustomerCredential(request: Request, input: {
+  customerId: unknown;
+  credential: unknown;
+  label?: unknown;
+  managerPin?: unknown;
+  replace?: unknown;
+  identityVerified?: unknown;
+}) {
+  const authorization = await requireCafeManager(request, input.managerPin);
+  const { admin } = await adminContext();
+  const replacing = input.replace === true || input.replace === "true";
+  const member = replacing
+    ? await replaceNekudotCredential({
+        admin,
+        shop: authorization.session.shop,
+        customerId: String(input.customerId ?? ""),
+        rawToken: input.credential,
+        kind: "RFID_OR_QR",
+        label: input.label || "Tarjeta reemplazada en Café POS",
+        identityVerified: input.identityVerified,
+      })
+    : await bindNekudotCredential({
+        admin,
+        shop: authorization.session.shop,
+        customerId: String(input.customerId ?? ""),
+        rawToken: input.credential,
+        kind: "RFID_OR_QR",
+        label: input.label || "Tarjeta asignada en Café POS",
+      });
+  return {
+    id: member.id,
+    displayName: member.displayName,
+    email: member.email,
+    availableCents: member.balanceCents - member.reservedCents,
+    balanceCents: member.balanceCents,
+    reservedCents: member.reservedCents,
+    credentialCount: member.credentials.filter((credential) => credential.active).length,
+    credentialLastFour: member.credentials.find((credential) => credential.active)?.lastFour ?? null,
+    broker: member.broker
+      ? { displayName: member.broker.displayName, code: member.broker.code }
+      : null,
+  };
+}
+
 export async function cafeLocation(admin?: GraphqlAdmin) {
   const context = admin ? { admin } : await adminContext();
   const data = await graphql<{
@@ -604,6 +720,9 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
   const location = await cafeLocation(admin);
   const resolved = await resolveCart(admin, location.id, raw.items);
   const grossTotalCents = resolved.reduce((sum, item) => sum + item.totalCents, 0);
+  const selectedCustomer = sale?.customerId
+    ? { id: sale.customerId, name: sale.customerName || "Cliente", email: sale.customerEmail }
+    : await resolveCafeCustomer(admin, raw.customerId);
   let nekudotMember = sale?.nekudotMemberId
     ? await db.nekudotMember.findUnique({
         where: { id: sale.nekudotMemberId },
@@ -613,6 +732,19 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
   let nekudotRedemption = sale?.nekudotRedemptionId
     ? await db.nekudotRedemption.findUnique({ where: { id: sale.nekudotRedemptionId } })
     : null;
+
+  if (!nekudotMember && selectedCustomer) {
+    const identity = await db.nekudotCustomerIdentity.findUnique({
+      where: {
+        shop_shopifyCustomerId: {
+          shop: session!.shop,
+          shopifyCustomerId: selectedCustomer.id,
+        },
+      },
+      include: { member: { include: { identities: true } } },
+    });
+    if (identity?.member.active) nekudotMember = identity.member;
+  }
 
   if (
     sale
@@ -625,6 +757,14 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
 
   if (!sale && String(raw.nekudotCredential ?? "").trim()) {
     nekudotMember = await lookupNekudotMember(session!.shop, raw.nekudotCredential);
+    const credentialIdentity = nekudotMember.identities.find((identity) => identity.shop === session!.shop);
+    if (selectedCustomer && credentialIdentity && credentialIdentity.shopifyCustomerId !== selectedCustomer.id) {
+      throw new CafePosError(
+        "La tarjeta Cohen's pertenece a otro cliente de Shopify.",
+        409,
+        "CUSTOMER_MEMBER_MISMATCH",
+      );
+    }
     const requestedAmount = String(raw.nekudotRedeemAmount ?? "").trim();
     const requestedCents = requestedAmount && requestedAmount !== "0"
       ? parseNekudotMoney(requestedAmount)
@@ -675,6 +815,9 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
           taxCents,
           totalCents,
           items: receiptItems,
+          customerId: selectedCustomer?.id ?? null,
+          customerName: selectedCustomer?.name ?? null,
+          customerEmail: selectedCustomer?.email ?? null,
           nekudotMemberId: nekudotMember?.id ?? null,
           nekudotRedemptionId: nekudotRedemption?.id ?? null,
           nekudotRedeemedCents,
@@ -700,7 +843,6 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
     }
     const currencyCode = "MXN";
     const taxRate = rateBasisPoints / 10_000;
-    const currentShopIdentity = nekudotMember?.identities.find((identity) => identity.shop === session!.shop) ?? null;
     const customAttributes = [
       { key: "cafe_pos_sale_id", value: sale.id },
       { key: "cafe_pos_staff", value: sale.staff.name },
@@ -745,8 +887,8 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
             },
           },
         } : {}),
-        ...(currentShopIdentity
-          ? { customer: { toAssociate: { id: currentShopIdentity.shopifyCustomerId } } }
+        ...(selectedCustomer
+          ? { customer: { toAssociate: { id: selectedCustomer.id } } }
           : {}),
         ...(totalCents > 0
           ? {

@@ -438,6 +438,9 @@ model CafeSale {
   totalCents           Int
   currencyCode         String            @default("MXN")
   items                Json
+  customerId           String?
+  customerName         String?
+  customerEmail        String?
   shopifyOrderId       String?
   shopifyOrderName     String?
   errorMessage         String?
@@ -461,6 +464,7 @@ model CafeSale {
   @@index([shop, status, createdAt])
   @@index([shiftId, paymentMethod])
   @@index([shopifyOrderId])
+  @@index([customerId])
   @@index([nekudotMemberId])
   @@index([nekudotRedemptionId])
 }

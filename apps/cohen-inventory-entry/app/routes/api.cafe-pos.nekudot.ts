@@ -17,6 +17,13 @@ function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) 
         broker: member.broker
           ? { displayName: member.broker.displayName, code: member.broker.code }
           : null,
+        customer: member.currentShopIdentity
+          ? {
+              id: member.currentShopIdentity.shopifyCustomerId,
+              displayName: member.currentShopIdentity.displayName,
+              email: member.currentShopIdentity.email,
+            }
+          : null,
         linkedToCafeShop: Boolean(member.currentShopIdentity),
   };
 }

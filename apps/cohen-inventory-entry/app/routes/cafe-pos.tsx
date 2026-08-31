@@ -84,6 +84,8 @@ type Sale = {
   nekudotMemberId?: string | null;
   nekudotRedemptionId?: string | null;
   nekudotRedeemedCents?: number;
+  customerName?: string | null;
+  customerEmail?: string | null;
   currencyCode: string;
   items: Array<CafeReceiptItem & { variantId?: string }>;
   shopifyOrderName: string | null;
@@ -102,6 +104,23 @@ type StaffMember = {
   role: string;
   active: boolean;
 };
+type CustomerMembership = {
+  id: string;
+  availableCents: number;
+  balanceCents: number;
+  reservedCents: number;
+  credentialCount: number;
+  credentialLastFour: string | null;
+  broker: { displayName: string; code: string } | null;
+};
+type Customer = {
+  id: string;
+  displayName: string;
+  email: string | null;
+  phone?: string | null;
+  numberOfOrders?: number;
+  member?: CustomerMembership | null;
+};
 type NekudotMember = {
   id: string;
   displayName: string;
@@ -110,6 +129,7 @@ type NekudotMember = {
   reservedCents: number;
   availableCents: number;
   broker: { displayName: string; code: string } | null;
+  customer: Customer | null;
   linkedToCafeShop: boolean;
 };
 
@@ -198,6 +218,7 @@ function buildReceipt(sale: Sale) {
   text(new Intl.DateTimeFormat("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: "America/Mexico_City" }).format(new Date(sale.createdAt)));
   command(27, 97, 0);
   text("--------------------------------");
+  if (sale.customerName) text(`Cliente: ${sale.customerName}`);
   for (const item of sale.items) {
     for (const line of wrapReceiptText(`${item.quantity} x ${item.title}${item.variantTitle ? ` (${item.variantTitle})` : ""}`)) text(line);
     text(receiptColumns(`  ${formatMoney(item.unitPriceCents)}`, formatMoney(item.totalCents)));
@@ -216,7 +237,7 @@ function buildReceipt(sale: Sale) {
   text(receiptColumns("Pago", sale.paymentMethod === "CASH" ? "Efectivo" : "Terminal"));
   text(`Atendió: ${sale.staff.name}`);
   command(27, 97, 1);
-  text(""); text("Gracias por tu compra"); text(""); text(""); text("");
+  text(""); text("Tus compras suman Nekudot"); text("Gracias por tu compra"); text(""); text(""); text("");
   return new Uint8Array(bytes);
 }
 
@@ -228,7 +249,7 @@ export default function CafePos() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: string; text: string } | null>(null);
-  const [drawer, setDrawer] = useState<"orders" | "shift" | "staff" | "reader" | null>(null);
+  const [drawer, setDrawer] = useState<"orders" | "shift" | "staff" | "reader" | "customers" | null>(null);
   const [openingCash, setOpeningCash] = useState("0");
   const [closingCash, setClosingCash] = useState("");
   const [terminalCounted, setTerminalCounted] = useState("");
@@ -240,6 +261,14 @@ export default function CafePos() {
   const [nekudotCredential, setNekudotCredential] = useState("");
   const [nekudotMember, setNekudotMember] = useState<NekudotMember | null>(null);
   const [nekudotRedeemAmount, setNekudotRedeemAmount] = useState("0");
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [newCustomerCredential, setNewCustomerCredential] = useState("");
+  const [credentialLabel, setCredentialLabel] = useState("Tarjeta NFC Café POS");
+  const [replaceCredential, setReplaceCredential] = useState(false);
+  const [identityVerified, setIdentityVerified] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
@@ -450,6 +479,7 @@ export default function CafePos() {
         body: JSON.stringify({
           idempotencyKey: saleKey.current,
           paymentMethod,
+          customerId: customer?.id,
           items: cart.map((line) => ({ variantId: line.variant.id, quantity: line.quantity })),
           ...(nekudotMember
             ? {
@@ -463,6 +493,7 @@ export default function CafePos() {
       setNekudotCredential("");
       setNekudotMember(null);
       setNekudotRedeemAmount("0");
+      setCustomer(null);
       saleKey.current = newSaleKey();
       setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
       setMessage({ tone: "success", text: `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} registrada.` });
@@ -484,6 +515,7 @@ export default function CafePos() {
         body: JSON.stringify({ intent: "lookup", credential }),
       });
       setNekudotMember(result.member);
+      if (result.member.customer) setCustomer(result.member.customer);
       setNekudotRedeemAmount("0");
       setMessage({
         tone: "success",
@@ -498,6 +530,72 @@ export default function CafePos() {
   async function identifyNekudot(event?: React.FormEvent) {
     event?.preventDefault();
     await identifyNekudotCredential(nekudotCredential);
+  }
+
+  async function findCustomers(event: React.FormEvent) {
+    event.preventDefault();
+    if (customerSearch.trim().length < 2) return;
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ customers: Customer[] }>(`/api/cafe-pos/customers?q=${encodeURIComponent(customerSearch)}`);
+      setCustomers(result.customers);
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se encontraron clientes." });
+    } finally { setBusy(false); }
+  }
+
+  function selectCustomerForSale(item: Customer) {
+    setCustomer(item);
+    setNekudotMember(null);
+    setNekudotCredential("");
+    setNekudotRedeemAmount("0");
+    setDrawer(null);
+    setMessage({
+      tone: item.member ? "success" : "info",
+      text: item.member
+        ? `${item.displayName} identificado. Esta compra acumulará 5%; lee su tarjeta si desea canjear saldo.`
+        : `${item.displayName} seleccionado. Puedes asignarle una tarjeta para activar Nekudot.`,
+    });
+  }
+
+  async function assignCustomerCredential() {
+    if (!selectedCustomer || newCustomerCredential.trim().length < 4) return;
+    let managerPin: string | undefined;
+    if (initial.staff?.role !== "MANAGER") {
+      const pin = window.prompt("Ingresa el PIN del gerente para asignar esta tarjeta:");
+      if (pin === null) return;
+      managerPin = pin;
+    }
+    if (replaceCredential && !identityVerified) {
+      setMessage({ tone: "error", text: "Confirma que verificaste la identificación antes de reemplazar la tarjeta." });
+      return;
+    }
+    const rawCredential = newCustomerCredential.trim();
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ member: CustomerMembership; message: string }>("/api/cafe-pos/customers", {
+        method: "POST",
+        body: JSON.stringify({
+          customerId: selectedCustomer.id,
+          credential: rawCredential,
+          label: credentialLabel,
+          managerPin,
+          replace: replaceCredential,
+          identityVerified: identityVerified ? "yes" : "no",
+        }),
+      });
+      const updated = { ...selectedCustomer, member: result.member };
+      setSelectedCustomer(updated);
+      setCustomers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setCustomer(updated);
+      setNekudotCredential(rawCredential);
+      setReplaceCredential(false);
+      setIdentityVerified(false);
+      setMessage({ tone: "success", text: `${result.message} Ya puede usarla en cafetería y retail.` });
+      await identifyNekudotCredential(rawCredential);
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarjeta." });
+    } finally { setBusy(false); }
   }
 
   async function openShift() {
@@ -533,6 +631,7 @@ export default function CafePos() {
       <div className="top-actions">
         <button className="btn btn-dark" onClick={connectPrinter}>🖨️ <span className="label">{printerName || "Conectar impresora"}</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("reader")}>◉ <span className="label">Lector NFC</span></button>
+        <button className="btn btn-dark" onClick={() => setDrawer("customers")}>⭐ <span className="label">Clientes</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("orders")}>🧾 <span className="label">Pedidos</span></button>
         <button className="btn btn-dark" onClick={() => setDrawer("shift")}>💵 <span className="label">Turno</span></button>
         {initial.staff.role === "MANAGER" ? <button className="btn btn-dark" disabled={busy} onClick={openStaff}>👥 <span className="label">Empleados</span></button> : null}
@@ -562,6 +661,7 @@ export default function CafePos() {
         </div>)}
         <section className="nekudot-card">
           <div className="nekudot-heading"><strong>¿Tiene tarjeta Cohen&apos;s?</strong><span>5% cashback</span></div>
+          {customer && !nekudotMember ? <div className="nekudot-selected-customer"><strong>{customer.displayName}</strong><small>{customer.member ? `${formatMoney(customer.member.availableCents)} disponibles · suma 5%` : "Cliente Shopify · sin tarjeta asignada"}</small><button className="btn btn-secondary" type="button" onClick={() => setDrawer("customers")}>Cambiar</button></div> : null}
           {!nekudotMember ? <small className="nekudot-prompt">Pregunta antes de cobrar. Si responde que sí, acerca la tarjeta al lector.</small> : null}
           {!nekudotMember ? <form className="nekudot-scan" onSubmit={identifyNekudot}>
             <input
@@ -579,6 +679,7 @@ export default function CafePos() {
             </label>
           </div>}
           {!nekudotMember && drawer !== "reader" ? <NfcBridgeReader compact onCredential={(credential) => { void identifyNekudotCredential(credential); }} /> : null}
+          {!nekudotMember ? <button className="btn btn-secondary btn-wide nekudot-customer-button" type="button" onClick={() => setDrawer("customers")}>Buscar por teléfono o nombre</button> : null}
         </section>
         <div className="totals">
           {appliedNekudotCents ? <><div className="total-line"><span>Total artículos</span><span>{formatMoney(totalCents)}</span></div><div className="total-line nekudot-discount"><span>Nekudot</span><span>−{formatMoney(appliedNekudotCents)}</span></div></> : null}
@@ -603,6 +704,15 @@ export default function CafePos() {
       </div>)}</> : null}
       {drawer === "shift" ? <><h2>Turno de caja</h2>{!shift ? <><p>No hay turno abierto.</p><label className="field">Fondo inicial<input type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label><button className="btn btn-success btn-wide" disabled={busy} onClick={openShift}>Abrir turno</button></> : <><div className="status status-info">Abierto por {shift.staff.name} el {new Date(shift.openedAt).toLocaleString("es-MX")}. Fondo: {formatMoney(shift.openingCashCents)}</div><label className="field">Efectivo contado<input type="number" min="0" step="0.01" value={closingCash} onChange={(event) => setClosingCash(event.target.value)} /></label><label className="field">Total de terminal<input type="number" min="0" step="0.01" value={terminalCounted} onChange={(event) => setTerminalCounted(event.target.value)} /></label><label className="field">Notas<textarea value={closeNotes} onChange={(event) => setCloseNotes(event.target.value)} /></label><button className="btn btn-danger btn-wide" disabled={busy || closingCash === "" || terminalCounted === ""} onClick={closeShift}>Cerrar y conciliar turno</button></>}</> : null}
       {drawer === "reader" ? <><h2>Prueba del lector NFC</h2><NfcReaderDiagnostics lookupEndpoint="/api/cafe-pos/nekudot" locationLabel="Cafetería" /></> : null}
+      {drawer === "customers" ? <><h2>Clientes Shopify + Nekudot</h2>
+        <p>Busca por nombre, teléfono o correo. El saldo es el mismo en cafetería y retail.</p>
+        <form className="customer-search" onSubmit={findCustomers}><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Nombre, teléfono o correo…" /><button className="btn btn-primary" disabled={busy || customerSearch.trim().length < 2}>Buscar</button></form>
+        <div className="customer-results">{customers.map((item) => <button type="button" key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => setSelectedCustomer(item)}><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"}</small><em>{item.member ? `${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin membresía Nekudot"}</em></span><b>{selectedCustomer?.id === item.id ? "✓" : "›"}</b></button>)}</div>
+        {selectedCustomer ? <section className="customer-profile"><h3>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p><button className="btn btn-success btn-wide" type="button" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar este cliente en la venta</button>
+          <div className="credential-assignment"><h3>{selectedCustomer.member ? "Asignar otra tarjeta" : "Activar Nekudot"}</h3><label className="field">ID de tarjeta<input value={newCustomerCredential} onChange={(event) => setNewCustomerCredential(event.target.value)} placeholder="Acerca la tarjeta o escribe el ID" /></label><NfcBridgeReader compact onCredential={setNewCustomerCredential} /><label className="field">Etiqueta<input value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={80} /></label>{selectedCustomer.member ? <><label className="check-field"><input type="checkbox" checked={replaceCredential} onChange={(event) => { setReplaceCredential(event.target.checked); setIdentityVerified(false); }} /> Reemplazar tarjeta perdida</label>{replaceCredential ? <label className="check-field warning"><input type="checkbox" checked={identityVerified} onChange={(event) => setIdentityVerified(event.target.checked)} /> Verifiqué la identidad del cliente</label> : null}</> : null}<button className="btn btn-primary btn-wide" type="button" disabled={busy || newCustomerCredential.trim().length < 4 || (replaceCredential && !identityVerified)} onClick={assignCustomerCredential}>{busy ? "Guardando…" : replaceCredential ? "Reemplazar tarjeta" : "Asignar tarjeta"}</button></div>
+        </section> : null}
+        {customer ? <button className="btn btn-danger btn-wide" type="button" onClick={() => { setCustomer(null); setNekudotMember(null); setNekudotCredential(""); setNekudotRedeemAmount("0"); setDrawer(null); }}>Continuar sin cliente</button> : null}
+      </> : null}
       {drawer === "staff" ? <><h2>Empleados</h2>
         <div className="status status-info">Solo el gerente puede crear, cambiar PINes o desactivar usuarios.</div>
         <p>Para cambiar un PIN, escribe exactamente el mismo primer nombre y asigna el PIN nuevo.</p>

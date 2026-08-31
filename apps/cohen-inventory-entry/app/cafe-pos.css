@@ -70,6 +70,22 @@ button { touch-action: manipulation; }
 .nekudot-member small { display: block; margin-top: 3px; color: #755b39; }
 .nekudot-amount { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .nekudot-discount { color: #26744c; font-weight: 800; }
+.nekudot-selected-customer { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: center; margin-top: 10px; padding: 9px; border-radius: 9px; background: #fff; }
+.nekudot-selected-customer small { grid-column: 1; color: #755b39; }
+.nekudot-selected-customer button { grid-column: 2; grid-row: 1 / span 2; }
+.nekudot-customer-button { margin-top: 8px; }
+.customer-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 12px; }
+.customer-search input { min-width: 0; border: 1px solid #cdbdab; border-radius: 10px; padding: 12px; }
+.customer-results { display: grid; gap: 8px; }
+.customer-results > button { width: 100%; display: flex; justify-content: space-between; gap: 10px; text-align: left; border: 1px solid #e2d8cb; border-radius: 11px; padding: 11px; background: white; color: #342014; }
+.customer-results > button.selected { border-color: #26744c; box-shadow: 0 0 0 2px rgb(38 116 76 / 15%); }
+.customer-results span { display: grid; gap: 3px; }
+.customer-results small, .customer-results em { color: #755b39; font-style: normal; }
+.customer-profile { margin-top: 14px; padding: 14px; border: 1px solid #d8bd88; border-radius: 12px; background: #fff8e9; }
+.credential-assignment { margin-top: 14px; padding-top: 12px; border-top: 1px solid #d8bd88; }
+.check-field { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.check-field input { width: auto; }
+.check-field.warning { color: #8a4b12; font-weight: 700; }
 
 .status { border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
 .status-error { background: #fde5e2; color: #771d18; }
