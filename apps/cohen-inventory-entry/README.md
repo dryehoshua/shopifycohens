@@ -101,21 +101,34 @@ bitácora y corrección.
 
 ## Lector NFC ACR122U
 
-El ACR122U se integra mediante el controlador CCID/PC/SC de macOS. No funciona
-como teclado y no requiere WebUSB. El puente escucha únicamente en
-`127.0.0.1:17812`, lee el UID público de la tarjeta y nunca lee ni persiste sus
-bloques de memoria.
+El ACR122U se integra mediante CCID/PC/SC en Windows y macOS. No funciona como
+teclado y no requiere WebUSB. El puente escucha únicamente en
+`127.0.0.1:17812`, lee el UID público de la tarjeta y nunca lee sus bloques de
+memoria. La POS conserva el UID sólo durante la operación activa; las ventas en
+espera exigen volver a acercar la tarjeta y la base central persiste únicamente
+su HMAC.
 
-En la Mac conectada al lector:
+### Windows
+
+En **Retail POS > Lector NFC**, descarga **Instalar en Windows** y abre
+`cohens-nfc-windows.cmd`. El instalador configura Node.js, compila el lector
+PC/SC, instala el puente para el usuario actual y lo inicia automáticamente con
+Windows. Antes de instalar verifica por SHA-256 el instalador, Node.js, el
+lector y el propio puente. Al terminar, realiza tres lecturas estables desde la
+prueba de la POS.
+
+### macOS y desarrollo local
+
+En la Mac conectada al lector, o durante desarrollo:
 
 ```sh
 pnpm nfc:start
 ```
 
 Después abre `http://127.0.0.1:17812` para la prueba diagnóstica o entra a
-Nekudot en Shopify. Las pantallas **Escanear**, **Vincular cliente** y la POS de
-la cafetería detectan el puente automáticamente. Una tarjeta debe retirarse y
-acercarse de nuevo para producir otra lectura.
+Nekudot en Shopify. Las pantallas **Escanear**, **Vincular cliente**, Retail POS
+y la POS de la cafetería detectan el puente automáticamente. Una tarjeta debe
+retirarse y acercarse de nuevo para producir otra lectura.
 
 Shopify Admin puede impedir que su iframe consulte directamente una dirección
 local. En ese caso el puente activa una entrada nativa restringida: solo escribe
@@ -145,6 +158,9 @@ texto claro.
 - `app/routes/api.pos.inventory.reverse.$movementId.ts`: corrección compensatoria.
 - `app/routes/api.pos.inventory.movements.ts`: movimientos recientes del POS.
 - `app/routes/webhooks.inventory-audit.tsx`: evidencia de cambios y eliminaciones.
+- `app/routes/app.inventory-reconciliation.tsx`: incidencias y conciliación manual.
+- `app/routes/api.inventory.reconcile.ts`: entrada protegida para conciliación diaria.
+- `app/inventory-reconciliation.server.ts`: validación de evidencia y cambios externos.
 - `app/routes/app._index.tsx`: panel administrativo y bitácora.
 - `app/inventory.server.ts`: reglas de dominio y GraphQL Admin API.
 - `prisma/schema.prisma`: sesiones, movimientos y eventos de auditoría.
@@ -234,6 +250,32 @@ servidor temporal para ella. Antes de instalar:
 7. instalar la app en la tienda;
 8. agregar el mosaico a Shopify POS;
 9. realizar una prueba física controlada con dos unidades.
+
+### Conciliación diaria de inventario
+
+Configura `INVENTORY_RECONCILIATION_SECRET` con un valor aleatorio largo y crea
+un cron diario que envíe `POST /api/inventory/reconcile` con el encabezado
+`Authorization: Bearer <secreto>`. El cuerpo puede ser `{}` para todas las
+tiendas instaladas o `{"shop":"tienda.myshopify.com"}` para una sola. La clave
+diaria es idempotente: repetir el cron en la misma fecha devuelve la misma
+ejecución. El proceso consulta Shopify y actualiza evidencia e incidencias
+locales; nunca modifica existencias.
+
+En Railway, crea **un servicio cron separado** a partir del mismo repositorio;
+no conviertas el servicio web persistente en cron. Usa como comando de inicio
+`pnpm run inventory:reconcile`, comparte `SHOPIFY_APP_URL` e
+`INVENTORY_RECONCILIATION_SECRET` con el servicio web y, si sólo debe revisar
+una tienda, agrega `INVENTORY_RECONCILIATION_SHOP`. El archivo
+`railway.inventory-reconciliation-cron.example.json` contiene una configuración
+de referencia para ejecutarlo diariamente a las 11:00 UTC. El proceso termina
+con error si falta configuración, vence el límite de 15 minutos o el endpoint
+no responde satisfactoriamente, de modo que Railway lo muestra como ejecución
+fallida.
+
+El panel **Conciliación de inventario** permite ejecutar la revisión a demanda,
+filtrar cambios externos y documentar el resultado de un conteo físico. Un
+movimiento con estado `RECONCILING` debe reintentarse desde la misma pantalla de
+recepción; PC y POS conservan el folio hasta recibir una confirmación terminal.
 
 SQLite no debe utilizarse como base definitiva de una instalación con varias
 cajas. La publicación productiva debe usar PostgreSQL administrado o una

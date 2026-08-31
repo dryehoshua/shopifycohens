@@ -7,7 +7,7 @@ import { authenticate } from "../shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [movements, receiptTotals, reversalTotals, failedCount, auditCount] =
+  const [movements, receiptTotals, reversalTotals, failedCount, auditCount, openIssueCount, criticalIssueCount] =
     await Promise.all([
       db.inventoryMovement.findMany({
         where: { shop: session.shop },
@@ -38,6 +38,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       db.inventoryAuditEvent.count({
         where: { shop: session.shop },
       }),
+      db.inventoryReconciliationIssue.count({
+        where: { shop: session.shop, status: "OPEN" },
+      }),
+      db.inventoryReconciliationIssue.count({
+        where: { shop: session.shop, status: "OPEN", severity: "CRITICAL" },
+      }),
     ]);
 
   return {
@@ -49,6 +55,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       reversalUnits: Math.abs(reversalTotals._sum.quantityDelta ?? 0),
       failedCount,
       auditCount,
+      openIssueCount,
+      criticalIssueCount,
     },
     movements: movements.map((movement) => ({
       id: movement.id,
@@ -122,6 +130,7 @@ export default function InventoryDashboard() {
             y registra el movimiento con folio de auditoría.
           </s-paragraph>
           <s-link href="/app/receive">Abrir “Registrar entrada PC”</s-link>
+          <s-link href="/app/inventory-reconciliation">Abrir conciliación e incidencias</s-link>
         </s-stack>
       </s-section>
 
@@ -152,6 +161,11 @@ export default function InventoryDashboard() {
             label="Eventos Shopify"
             value={summary.auditCount}
             detail="Cambios y eliminaciones capturados"
+          />
+          <Metric
+            label="Incidencias abiertas"
+            value={summary.openIssueCount}
+            detail={`${summary.criticalIssueCount} críticas`}
           />
         </div>
       </s-section>

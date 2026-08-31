@@ -80,6 +80,8 @@ function InventoryEntry() {
   const lookupSequence = useRef(0);
   const lookupRef = useRef(null);
   const lastHardwareScan = useRef({ data: "", at: 0 });
+  const receiptOperationKey = useRef(makeOperationKey("receipt"));
+  const reversalOperationKey = useRef(makeOperationKey("reversal"));
 
   async function loadMovements() {
     try {
@@ -114,9 +116,12 @@ function InventoryEntry() {
     }
 
     const sequence = ++lookupSequence.current;
+    receiptOperationKey.current = makeOperationKey("receipt");
     setBarcode(normalized);
     setVariant(null);
     setLastMovement(null);
+    receiptOperationKey.current = makeOperationKey("receipt");
+    reversalOperationKey.current = makeOperationKey("reversal");
     setMessage("");
     setPhase("looking-up");
 
@@ -200,7 +205,7 @@ function InventoryEntry() {
 
     setMessage("");
     setPhase("submitting");
-    const idempotencyKey = makeOperationKey("receipt");
+    const idempotencyKey = receiptOperationKey.current;
 
     try {
       const payload = await backendFetch("/api/pos/inventory/receive", {
@@ -242,7 +247,7 @@ function InventoryEntry() {
         {
           method: "POST",
           body: JSON.stringify({
-            idempotencyKey: makeOperationKey("reversal"),
+            idempotencyKey: reversalOperationKey.current,
             staffMemberId:
               shopify.session.staffMember.value?.id ?? session.staffMemberId,
             deviceId: shopify.session.deviceId,
@@ -450,6 +455,7 @@ function InventoryEntry() {
                       tone="critical"
                       onClick={() => {
                         setMessage("");
+                        reversalOperationKey.current = makeOperationKey("reversal");
                         setPhase("reversal-confirm");
                       }}
                     >

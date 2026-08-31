@@ -95,6 +95,9 @@ type AdjustmentResponse = {
         changes: Array<{
           name: string;
           delta: number;
+          quantityAfterChange?: number | null;
+          item?: { id: string } | null;
+          location?: { id: string } | null;
         }>;
       } | null;
     };
@@ -462,6 +465,9 @@ export async function adjustAvailableQuantity(
             changes {
               name
               delta
+              quantityAfterChange
+              item { id }
+              location { id }
             }
           }
         }

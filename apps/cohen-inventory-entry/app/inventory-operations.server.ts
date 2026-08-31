@@ -13,6 +13,7 @@ import {
   toLocationGid,
 } from "./inventory.server";
 import { resolveSupplier } from "./supplier.server";
+import { isTransientInventoryFailure } from "./inventory-reconciliation-domain";
 
 export type InventoryActor = {
   userId?: unknown;
@@ -124,6 +125,8 @@ export async function receiveInventory(
         { status: 409, code: "PREVIOUS_ATTEMPT_FAILED" },
       );
     }
+    // PENDING y RECONCILING se reenvían con la misma clave. Shopify garantiza
+    // que @idempotent devuelve el primer resultado sin aplicar otro ajuste.
   } else {
     const [variant, supplierRecord] = await Promise.all([
       lookupVariantByBarcode(admin, barcode, locationId),
@@ -209,10 +212,13 @@ export async function receiveInventory(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Shopify rechazó el ajuste.";
+    const transient = isTransientInventoryFailure(error);
     await db.inventoryMovement.updateMany({
-      where: { id: movement.id, status: "PENDING" },
+      where: { id: movement.id, status: { in: ["PENDING", "RECONCILING"] } },
       data: {
-        status: "FAILED",
+        status: transient ? "RECONCILING" : "FAILED",
+        reconciliationStatus: transient ? "UNKNOWN" : "NEEDS_REVIEW",
+        reconciliationError: message,
         errorMessage: message,
         responsePayload:
           error instanceof InventoryDomainError && error.details
@@ -220,19 +226,38 @@ export async function receiveInventory(
             : undefined,
       },
     });
+    if (transient) {
+      throw new InventoryDomainError(
+        "Shopify no confirmó la respuesta. Vuelve a pulsar Registrar con los mismos datos; el folio se recuperará sin duplicar unidades.",
+        {
+          status: 503,
+          code: "INVENTORY_RECONCILING",
+          details: { movementId: movement.id, idempotencyKey: movement.idempotencyKey },
+        },
+      );
+    }
     throw error;
   }
+
+  const availableChange = adjustment.group.changes.find(
+    (change) => change.name === "available" && change.delta === movement.quantityDelta,
+  );
 
   const committed = await db.inventoryMovement.update({
     where: { id: movement.id },
     data: {
       status: "COMMITTED",
-      afterAvailable: movement.beforeAvailable + movement.quantityDelta,
+      afterAvailable:
+        availableChange?.quantityAfterChange ??
+        movement.beforeAvailable + movement.quantityDelta,
       shopifyAdjustmentGroupId: adjustment.group.id || null,
       shopifyAdjustmentAt: new Date(adjustment.group.createdAt),
       shopifyAdjustmentReason: adjustment.group.reason,
       responsePayload: adjustment.raw,
       errorMessage: null,
+      reconciliationStatus: "MATCHED",
+      reconciledAt: new Date(),
+      reconciliationError: null,
     },
   });
 
@@ -404,10 +429,13 @@ export async function reverseInventory(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Shopify rechazó el ajuste.";
+    const transient = isTransientInventoryFailure(error);
     await db.inventoryMovement.updateMany({
-      where: { id: reversal.id, status: "PENDING" },
+      where: { id: reversal.id, status: { in: ["PENDING", "RECONCILING"] } },
       data: {
-        status: "FAILED",
+        status: transient ? "RECONCILING" : "FAILED",
+        reconciliationStatus: transient ? "UNKNOWN" : "NEEDS_REVIEW",
+        reconciliationError: message,
         errorMessage: message,
         responsePayload:
           error instanceof InventoryDomainError && error.details
@@ -415,19 +443,38 @@ export async function reverseInventory(
             : undefined,
       },
     });
+    if (transient) {
+      throw new InventoryDomainError(
+        "Shopify no confirmó la corrección. Vuelve a pulsar Confirmar corrección; el mismo folio se recuperará sin duplicarla.",
+        {
+          status: 503,
+          code: "INVENTORY_RECONCILING",
+          details: { movementId: reversal.id, idempotencyKey: reversal.idempotencyKey },
+        },
+      );
+    }
     throw error;
   }
+
+  const availableChange = adjustment.group.changes.find(
+    (change) => change.name === "available" && change.delta === reversal.quantityDelta,
+  );
 
   const committed = await db.inventoryMovement.update({
     where: { id: reversal.id },
     data: {
       status: "COMMITTED",
-      afterAvailable: reversal.beforeAvailable + reversal.quantityDelta,
+      afterAvailable:
+        availableChange?.quantityAfterChange ??
+        reversal.beforeAvailable + reversal.quantityDelta,
       shopifyAdjustmentGroupId: adjustment.group.id || null,
       shopifyAdjustmentAt: new Date(adjustment.group.createdAt),
       shopifyAdjustmentReason: adjustment.group.reason,
       responsePayload: adjustment.raw,
       errorMessage: null,
+      reconciliationStatus: "MATCHED",
+      reconciledAt: new Date(),
+      reconciliationError: null,
     },
   });
 

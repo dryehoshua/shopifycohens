@@ -19,14 +19,15 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "node --test app/cafe-pos-domain.test.ts app/nekudot-domain.test.ts app/nfc-bridge.test.ts",
+    "test": "node --test app/cafe-pos-domain.test.ts app/nekudot-domain.test.ts app/nfc-bridge.test.ts app/inventory-reconciliation-domain.test.ts",
     "nfc:start": "node scripts/nekudot-nfc-bridge.mjs",
     "catalog:dry-run": "node scripts/import-products-to-dev.mjs",
     "catalog:pilot": "node scripts/import-products-to-dev.mjs --pilot",
     "catalog:import": "node scripts/import-products-to-dev.mjs --all",
     "catalog:verify": "node scripts/import-products-to-dev.mjs --verify",
     "sales:sync": "node scripts/sync-sales-from-shopify.mjs",
-    "sales:dry-run": "node scripts/sync-sales-from-shopify.mjs --dry-run"
+    "sales:dry-run": "node scripts/sync-sales-from-shopify.mjs --dry-run",
+    "inventory:reconcile": "node scripts/run-inventory-reconciliation-cron.mjs"
   },
   "type": "module",
   "engines": {

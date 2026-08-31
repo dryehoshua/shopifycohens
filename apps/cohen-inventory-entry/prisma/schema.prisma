@@ -76,10 +76,14 @@ model InventoryMovement {
   requestPayload           Json?
   responsePayload          Json?
   errorMessage             String?
+  reconciliationStatus     String    @default("PENDING")
+  reconciledAt             DateTime?
+  reconciliationError      String?
 
-  reversalOfId String?            @unique
-  reversalOf   InventoryMovement? @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversal     InventoryMovement? @relation("MovementReversal")
+  reversalOfId         String?                        @unique
+  reversalOf           InventoryMovement?             @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal             InventoryMovement?             @relation("MovementReversal")
+  reconciliationIssues InventoryReconciliationIssue[]
 
   @@index([shop, occurredAt])
   @@index([shop, barcode])
@@ -111,22 +115,92 @@ model Supplier {
 /// Copia local de los webhooks que pueden explicar cambios o eliminaciones.
 /// Conserva el payload aun si el producto o artículo deja de existir en Shopify.
 model InventoryAuditEvent {
-  id              String    @id @default(cuid())
-  webhookId       String    @unique
-  shop            String
-  topic           String
-  occurredAt      DateTime?
-  capturedAt      DateTime  @default(now())
-  resourceId      String?
-  locationId      String?
-  inventoryItemId String?
-  productId       String?
-  payload         Json
+  id                   String                         @id @default(cuid())
+  webhookId            String                         @unique
+  shop                 String
+  topic                String
+  occurredAt           DateTime?
+  capturedAt           DateTime                       @default(now())
+  resourceId           String?
+  locationId           String?
+  inventoryItemId      String?
+  productId            String?
+  payload              Json
+  reconciliationIssues InventoryReconciliationIssue[]
 
   @@index([shop, capturedAt])
   @@index([shop, topic])
   @@index([inventoryItemId])
   @@index([productId])
+}
+
+/// Una ejecución idempotente del conciliador de inventario. El proceso sólo
+/// consulta Shopify y actualiza evidencia local; nunca corrige existencias.
+model InventoryReconciliationRun {
+  id                 String    @id @default(cuid())
+  shop               String
+  triggerKey         String
+  source             String
+  status             String    @default("RUNNING")
+  startedAt          DateTime  @default(now())
+  completedAt        DateTime?
+  movementsExamined  Int       @default(0)
+  movementsMatched   Int       @default(0)
+  externalChanges    Int       @default(0)
+  uncertainMovements Int       @default(0)
+  pendingSales       Int       @default(0)
+  openIssues         Int       @default(0)
+  errorMessage       String?
+  metadata           Json?
+
+  @@unique([shop, triggerKey])
+  @@index([shop, startedAt])
+  @@index([status, startedAt])
+}
+
+/// Incidencia accionable producida por la conciliación. Los cambios externos
+/// se agrupan por artículo y ubicación para evitar una alerta por cada venta.
+model InventoryReconciliationIssue {
+  id                String               @id @default(cuid())
+  fingerprint       String               @unique
+  shop              String
+  kind              String
+  status            String               @default("OPEN")
+  severity          String               @default("WARNING")
+  source            String
+  occurredAt        DateTime?
+  locationId        String?
+  locationName      String?
+  inventoryItemId   String?
+  productId         String?
+  variantId         String?
+  productTitle      String?
+  variantTitle      String?
+  sku               String?
+  barcode           String?
+  quantityDelta     Int?
+  expectedAvailable Int?
+  actualAvailable   Int?
+  movementId        String?
+  movement          InventoryMovement?   @relation(fields: [movementId], references: [id], onDelete: SetNull)
+  auditEventId      String?
+  auditEvent        InventoryAuditEvent? @relation(fields: [auditEventId], references: [id], onDelete: SetNull)
+  localRecordType   String?
+  localRecordId     String?
+  summary           String
+  detail            String
+  metadata          Json?
+  reviewedAt        DateTime?
+  reviewedBy        String?
+  reviewNote        String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([shop, status, occurredAt])
+  @@index([shop, kind, status])
+  @@index([inventoryItemId, locationId])
+  @@index([movementId])
+  @@index([auditEventId])
 }
 
 /// Ejecución auditable de una importación o sincronización de ventas.
@@ -399,7 +473,7 @@ model RetailStaff {
   name           String
   normalizedName String
   pinSalt        String
-  pinHash         String
+  pinHash        String
   role           String   @default("CASHIER")
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())

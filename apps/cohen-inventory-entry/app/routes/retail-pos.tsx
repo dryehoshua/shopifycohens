@@ -134,10 +134,7 @@ type SuspendedSale = {
   createdAt: string;
   cart: CartLine[];
   customer: Customer | null;
-  member: Member | null;
-  credential: string;
   discountAmount: string;
-  nekudotAmount: string;
 };
 type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | "reader" | null;
 
@@ -183,13 +180,29 @@ function variantCanSell(variant: Variant) {
   return !variant.tracked || variant.available > 0 || variant.inventoryPolicy === "CONTINUE";
 }
 
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code: string,
+  ) {
+    super(message);
+  }
+}
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const body = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error || "No se pudo completar la operación.");
+  const body = (await response.json()) as T & { error?: string; code?: string };
+  if (!response.ok) {
+    throw new ApiError(
+      body.error || "No se pudo completar la operación.",
+      response.status,
+      body.code || "API_ERROR",
+    );
+  }
   return body;
 }
 
@@ -306,10 +319,12 @@ export default function RetailPos() {
   const [suspendedLoaded, setSuspendedLoaded] = useState(false);
   const [cashCheckoutOpen, setCashCheckoutOpen] = useState(false);
   const [cashReceivedInput, setCashReceivedInput] = useState("");
+  const [cardAssignmentOpen, setCardAssignmentOpen] = useState(false);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
   const searchRef = useRef<HTMLInputElement>(null);
   const cashInputRef = useRef<HTMLInputElement>(null);
+  const cardCustomerSearchRef = useRef<HTMLInputElement>(null);
   const catalogRequestRef = useRef(0);
 
   useEffect(() => {
@@ -317,6 +332,12 @@ export default function RetailPos() {
     const frame = window.requestAnimationFrame(() => cashInputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [cashCheckoutOpen]);
+
+  useEffect(() => {
+    if (!cardAssignmentOpen) return;
+    const frame = window.requestAnimationFrame(() => cardCustomerSearchRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [cardAssignmentOpen]);
 
   const loadCatalog = useCallback(async () => {
     const requestId = catalogRequestRef.current + 1;
@@ -384,7 +405,20 @@ export default function RetailPos() {
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem("cohens-retail-suspended-sales");
-      if (stored) setSuspendedSales(JSON.parse(stored) as SuspendedSale[]);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Array<SuspendedSale & {
+          member?: unknown;
+          credential?: unknown;
+          nekudotAmount?: unknown;
+        }>;
+        setSuspendedSales(parsed.map((sale) => ({
+          id: sale.id,
+          createdAt: sale.createdAt,
+          cart: sale.cart,
+          customer: sale.customer,
+          discountAmount: sale.discountAmount,
+        })).slice(0, 20));
+      }
     } catch {
       setMessage({ tone: "warning", text: "No se pudieron recuperar las ventas en espera de esta terminal." });
     } finally {
@@ -465,10 +499,7 @@ export default function RetailPos() {
       createdAt: new Date().toISOString(),
       cart,
       customer,
-      member,
-      credential,
       discountAmount,
-      nekudotAmount,
     };
     setSuspendedSales((current) => [suspended, ...current].slice(0, 20));
     clearCurrentSale();
@@ -484,17 +515,14 @@ export default function RetailPos() {
         createdAt: new Date().toISOString(),
         cart,
         customer,
-        member,
-        credential,
         discountAmount,
-        nekudotAmount,
       }, ...current.filter((item) => item.id !== suspended.id)].slice(0, 20));
     } else {
       setSuspendedSales((current) => current.filter((item) => item.id !== suspended.id));
     }
-    setCart(suspended.cart); setCustomer(suspended.customer); setMember(suspended.member); setCredential(suspended.credential);
-    setDiscountAmount(suspended.discountAmount); setNekudotAmount(suspended.nekudotAmount); setDrawer(null); saleKey.current = newSaleKey();
-    setMessage({ tone: "success", text: "Venta recuperada. Continúa escaneando." });
+    setCart(suspended.cart); setCustomer(suspended.customer); setMember(null); setCredential("");
+    setDiscountAmount(suspended.discountAmount); setNekudotAmount("0"); setDrawer(null); saleKey.current = newSaleKey();
+    setMessage({ tone: "success", text: "Venta recuperada. Vuelve a leer la tarjeta si el cliente desea usar Nekudot." });
     window.requestAnimationFrame(() => searchRef.current?.focus());
   }
 
@@ -599,6 +627,7 @@ export default function RetailPos() {
       setCustomer(updatedCustomer); setCredential(rawCredential);
       setMessage({ tone: "success", text: `${result.message} Ya puede identificarse con la tarjeta o con su teléfono.` });
       await identifyCredential(rawCredential);
+      setCardAssignmentOpen(false);
       setReplaceCredential(false); setIdentityVerified(false);
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarjeta." });
@@ -609,12 +638,44 @@ export default function RetailPos() {
     const value = raw.trim(); if (!value) return;
     setCredential(value); setBusy(true); setMessage(null);
     try {
-      const result = await api<{ member: Member }>(`/api/retail-pos/nekudot?credential=${encodeURIComponent(value)}`);
+      const result = await api<{ member: Member }>("/api/retail-pos/nekudot", {
+        method: "POST",
+        body: JSON.stringify({ intent: "lookup", credential: value }),
+      });
       setMember(result.member); setNekudotAmount("0");
       if (result.member.customer) setCustomer(result.member.customer);
       setMessage({ tone: "success", text: `${result.member.displayName} identificado. La compra acumulará 5% en Nekudot.` });
-    } catch (error) { setMember(null); setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo leer la tarjeta." }); }
+    } catch (error) {
+      setMember(null);
+      if (error instanceof ApiError && error.code === "CREDENTIAL_NOT_FOUND") {
+        setNewCustomerCredential(value);
+        setCredentialLabel("Tarjeta NFC Retail POS");
+        setSelectedCustomer(customer);
+        setCustomerSearch("");
+        setCustomers(customer ? [customer] : []);
+        setReplaceCredential(false);
+        setIdentityVerified(false);
+        setDrawer(null);
+        setCashCheckoutOpen(false);
+        setCardAssignmentOpen(true);
+        setMessage({ tone: "info", text: "Tarjeta nueva detectada. Selecciona el cliente al que deseas asignarla." });
+      } else {
+        setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo leer la tarjeta." });
+      }
+    }
     finally { setBusy(false); }
+  }
+
+  function closeCardAssignment() {
+    if (busy) return;
+    setCardAssignmentOpen(false);
+    setNewCustomerCredential("");
+    setCustomerSearch("");
+    setCustomers([]);
+    setSelectedCustomer(null);
+    setReplaceCredential(false);
+    setIdentityVerified(false);
+    setCredential("");
   }
 
   async function charge(paymentMethod: "CASH" | "EXTERNAL_CARD" | "SPLIT", receivedCash?: string) {
@@ -810,12 +871,42 @@ export default function RetailPos() {
           {member ? <label>Usar Nekudot<div><input type="number" min="0" max={(Math.min(afterDiscountCents, member.availableCents) / 100).toFixed(2)} step="0.01" value={nekudotAmount} onChange={(event) => setNekudotAmount(event.target.value)} /><button onClick={() => setNekudotAmount((Math.min(afterDiscountCents, member.availableCents) / 100).toFixed(2))}>Máximo</button></div></label> : null}
         </section>
         <div className="retail-totals">
-          <div><span>{itemCount} artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>Nekudot devengados</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
+          <div><span>{itemCount} artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>Nekudot usados</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
           <div className="grand"><span>A pagar</span><span>{formatMoney(amountDueCents)}</span></div><small>Pedido, cliente e inventario se registran en Shopify</small>
         </div>
         <div className="retail-payment-grid"><button className="cash" disabled={busy || !shift || !cart.length} onClick={openCashCheckout}><span>EFECTIVO</span><b>{formatMoney(amountDueCents)}</b></button><button className="card" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}><span>TARJETA</span><b>Terminal</b></button><button className="split" disabled={busy || !shift || !cart.length || amountDueCents <= 1} onClick={() => charge("SPLIT")}><span>PAGO</span><b>Mixto</b></button></div>
       </aside>
     </div>
+    {cardAssignmentOpen ? <div className="retail-card-assignment-backdrop">
+      <button type="button" className="retail-card-assignment-dismiss" aria-label="Cerrar asignación de tarjeta" disabled={busy} onClick={closeCardAssignment} />
+      <section className="retail-card-assignment-modal" role="dialog" aria-modal="true" aria-labelledby="retail-card-assignment-title">
+        <button type="button" className="retail-cash-close" aria-label="Cerrar asignación de tarjeta" disabled={busy} onClick={closeCardAssignment}>×</button>
+        <span className="retail-kicker">TARJETA NUEVA DETECTADA</span>
+        <h2 id="retail-card-assignment-title">¿A qué cliente pertenece?</h2>
+        <div className="retail-new-card-summary"><span>Tarjeta lista para vincular</span><strong>•••• {newCustomerCredential.slice(-4).toUpperCase()}</strong></div>
+        <p>Busca al cliente en el catálogo de Shopify y selecciónalo. La tarjeta quedará vinculada a su perfil de Cohen&apos;s y podrá acumular Nekudot.</p>
+        <form className="retail-customer-search retail-card-customer-search" onSubmit={findCustomers}>
+          <input ref={cardCustomerSearchRef} value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Nombre, teléfono o correo…" aria-label="Buscar cliente para asignar tarjeta" />
+          <button disabled={busy || customerSearch.trim().length < 2}>{busy ? "Buscando…" : "Buscar"}</button>
+        </form>
+        <div className="retail-customer-results retail-card-customer-results">
+          {customers.map((item) => <button type="button" key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => setSelectedCustomer(item)}>
+            <span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span>
+            <span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span>
+            <i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i>
+          </button>)}
+        </div>
+        {customerSearch.trim().length >= 2 && !busy && !customers.length ? <div className="retail-empty compact"><strong>No encontramos coincidencias</strong><span>Prueba el nombre completo, teléfono o correo.</span></div> : null}
+        {selectedCustomer ? <div className="retail-card-selected-customer">
+          <span className="retail-customer-avatar large">{selectedCustomer.displayName.slice(0, 2).toUpperCase()}</span>
+          <div><small>CLIENTE SELECCIONADO</small><strong>{selectedCustomer.displayName}</strong><span>{selectedCustomer.phone || selectedCustomer.email || "Cliente Shopify"}</span></div>
+        </div> : <div className="retail-card-selection-help">Selecciona un cliente para continuar.</div>}
+        <div className="retail-card-modal-actions">
+          <button type="button" disabled={busy} onClick={closeCardAssignment}>Cancelar</button>
+          <button type="button" className="primary" disabled={busy || !selectedCustomer || newCustomerCredential.trim().length < 4} onClick={assignCustomerCredential}>{busy ? "Asignando…" : selectedCustomer ? `Asignar a ${selectedCustomer.displayName}` : "Asignar tarjeta"}</button>
+        </div>
+      </section>
+    </div> : null}
     {cashCheckoutOpen ? <div className="retail-cash-backdrop">
       <button type="button" className="retail-cash-dismiss" aria-label="Cerrar cobro en efectivo" disabled={busy} onClick={() => setCashCheckoutOpen(false)} />
       <section className="retail-cash-modal" role="dialog" aria-modal="true" aria-labelledby="retail-cash-title">

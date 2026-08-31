@@ -7,6 +7,7 @@ $ProgressPreference = "SilentlyContinue"
 $BaseUrl = "https://cohens-operations-production.up.railway.app"
 $NodeReleaseUrl = "https://nodejs.org/download/release/latest-v22.x"
 $ReaderSourceSha256 = "515235EC761C6A06C54429B87CF602D2DD0CF61D7536EB4E332284EE80F4594A"
+$BridgeScriptSha256 = "B2A511E842F801A6E84DFD1395431AF97D2DED734FF7CB07A5C9A806744561A6"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "Cohens\NFC"
 $BinDirectory = Join-Path $AppDirectory "bin"
 $LogDirectory = Join-Path $AppDirectory "logs"
@@ -82,6 +83,10 @@ try {
   Download-File `
     "https://raw.githubusercontent.com/dryehoshua/shopifycohens/main/apps/cohen-inventory-entry/scripts/nekudot-nfc-bridge.mjs" `
     $BridgeScript
+  $ActualBridgeScriptHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $BridgeScript).Hash.ToUpperInvariant()
+  if ($ActualBridgeScriptHash -ne $BridgeScriptSha256) {
+    throw "La verificación SHA-256 del puente NFC no coincidió. Instalación cancelada."
+  }
   $ReaderSource = Join-Path $TemporaryDirectory "acr122u-reader-windows.cs"
   Download-File "$BaseUrl/downloads/windows/acr122u-reader-windows.cs" $ReaderSource
   $ActualReaderSourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ReaderSource).Hash.ToUpperInvariant()

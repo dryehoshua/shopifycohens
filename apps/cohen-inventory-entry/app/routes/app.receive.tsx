@@ -316,6 +316,8 @@ export default function DesktopInventoryEntry() {
   const actionData = fetcher.data as ActionData | undefined;
   const barcodeRef = useRef<HTMLInputElement>(null);
   const quantityRef = useRef<HTMLInputElement>(null);
+  const receiptOperationKeyRef = useRef(makeOperationKey("desktop-receipt"));
+  const reversalOperationKeyRef = useRef(makeOperationKey("desktop-reversal"));
   const [phase, setPhase] = useState<Phase>("scan");
   const [barcode, setBarcode] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -403,6 +405,7 @@ export default function DesktopInventoryEntry() {
 
   function lookup() {
     if (!barcode.trim() || !locationId || busy) return;
+    receiptOperationKeyRef.current = makeOperationKey("desktop-receipt");
     setMessage("");
     setVariant(null);
     fetcher.submit(
@@ -423,7 +426,7 @@ export default function DesktopInventoryEntry() {
         newSupplier: supplierId === NEW_SUPPLIER_VALUE ? newSupplier : "",
         note,
         locationId,
-        idempotencyKey: makeOperationKey("desktop-receipt"),
+        idempotencyKey: receiptOperationKeyRef.current,
       },
       { method: "post" },
     );
@@ -437,7 +440,7 @@ export default function DesktopInventoryEntry() {
         intent: "reverse",
         movementId: movementToReverse.id,
         note: reversalNote,
-        idempotencyKey: makeOperationKey("desktop-reversal"),
+        idempotencyKey: reversalOperationKeyRef.current,
       },
       { method: "post" },
     );
@@ -454,10 +457,13 @@ export default function DesktopInventoryEntry() {
     setLastMovement(null);
     setMovementToReverse(null);
     setMessage("");
+    receiptOperationKeyRef.current = makeOperationKey("desktop-receipt");
+    reversalOperationKeyRef.current = makeOperationKey("desktop-reversal");
     setPhase("scan");
   }
 
   function chooseReversal(movement: MovementView | MovementResult) {
+    reversalOperationKeyRef.current = makeOperationKey("desktop-reversal");
     setMovementToReverse(movement);
     setReversalNote("");
     setMessage("");

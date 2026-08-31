@@ -87,7 +87,12 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
     lookupRunRef.current = lookupRun;
     setLookup({ state: "loading" });
     try {
-      const response = await fetch(`${lookupEndpoint}?credential=${encodeURIComponent(credential)}`, { cache: "no-store" });
+      const response = await fetch(lookupEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "lookup", credential }),
+        cache: "no-store",
+      });
       const body = await response.json() as { member?: LookupMember; error?: string };
       if (lookupRunRef.current !== lookupRun) return;
       if (response.ok && body.member) {

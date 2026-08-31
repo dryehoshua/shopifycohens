@@ -11,7 +11,7 @@ echo.
 
 set "COHENS_NFC_INSTALLER=%TEMP%\cohens-nfc-windows-%RANDOM%-%RANDOM%.ps1"
 set "COHENS_NFC_INSTALLER_URL=https://cohens-operations-production.up.railway.app/downloads/windows/install-cohens-nfc-windows.ps1"
-set "COHENS_NFC_INSTALLER_SHA256=B641BBA7AD36313284889B218080F245934034411B13658B35A9AA511CC3D192"
+set "COHENS_NFC_INSTALLER_SHA256=E6F3AE356957801FA07049C5ED285B38300022F2F3D53BD5F32A9769406E829F"
 
 echo Descargando el instalador seguro...
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri $env:COHENS_NFC_INSTALLER_URL -OutFile $env:COHENS_NFC_INSTALLER; $actual=(Get-FileHash -Algorithm SHA256 -LiteralPath $env:COHENS_NFC_INSTALLER).Hash.ToUpperInvariant(); if($actual -ne $env:COHENS_NFC_INSTALLER_SHA256){throw 'La firma SHA-256 del instalador no coincide.'}"

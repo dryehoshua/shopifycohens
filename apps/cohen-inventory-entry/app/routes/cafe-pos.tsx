@@ -479,9 +479,10 @@ export default function CafePos() {
     setNekudotCredential(credential);
     setBusy(true); setMessage(null);
     try {
-      const result = await api<{ member: NekudotMember }>(
-        `/api/cafe-pos/nekudot?credential=${encodeURIComponent(credential)}`,
-      );
+      const result = await api<{ member: NekudotMember }>("/api/cafe-pos/nekudot", {
+        method: "POST",
+        body: JSON.stringify({ intent: "lookup", credential }),
+      });
       setNekudotMember(result.member);
       setNekudotRedeemAmount("0");
       setMessage({

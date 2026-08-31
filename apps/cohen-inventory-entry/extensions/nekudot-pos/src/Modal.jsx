@@ -45,7 +45,10 @@ function NekudotModal() {
     if (!value) return setMessage("Escanea o escribe el ID Nekudot.");
     setBusy(true); setMessage(""); setMember(null); setCredential(value);
     try {
-      const payload = await backend(`/api/pos/nekudot?credential=${encodeURIComponent(value)}`);
+      const payload = await backend("/api/pos/nekudot", {
+        method: "POST",
+        body: JSON.stringify({ intent: "lookup", credential: value }),
+      });
       if (!payload.member.currentShopIdentity) {
         throw new Error("La tarjeta existe, pero falta vincular el cliente de esta tienda desde el panel Nekudot.");
       }

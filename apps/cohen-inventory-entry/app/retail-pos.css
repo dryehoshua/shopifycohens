@@ -156,6 +156,27 @@ button { touch-action: manipulation; }
 .retail-cash-actions button.primary { color: white; background: #237153; }
 .retail-cash-actions button:disabled { cursor: not-allowed; opacity: .5; }
 
+.retail-card-assignment-backdrop { position: fixed; inset: 0; z-index: 65; display: grid; place-items: center; padding: 18px; background: rgb(8 27 20 / 68%); backdrop-filter: blur(4px); }
+.retail-card-assignment-dismiss { position: absolute; inset: 0; border: 0; background: transparent; cursor: default; }
+.retail-card-assignment-modal { position: relative; z-index: 1; width: min(640px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 28px; border: 1px solid #d7dfda; border-radius: 22px; color: #183b2e; background: #fffefa; box-shadow: 0 30px 90px rgb(4 24 16 / 48%); }
+.retail-card-assignment-modal h2 { margin: 5px 42px 8px 0; font: 700 30px Georgia, serif; }
+.retail-card-assignment-modal > p { margin: 0 0 16px; color: #64756d; line-height: 1.5; }
+.retail-new-card-summary { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin: 16px 0; padding: 13px 15px; border-radius: 12px; color: #6d5217; background: #fff2cc; }
+.retail-new-card-summary span { font-size: 12px; font-weight: 800; }
+.retail-new-card-summary strong { font: 900 18px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; }
+.retail-card-customer-search { margin: 0 0 12px; }
+.retail-card-customer-search input { border-width: 2px; border-color: #2d7458; }
+.retail-card-customer-results { max-height: 250px; overflow: auto; padding-right: 2px; }
+.retail-card-selected-customer { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; margin-top: 14px; padding: 13px; border: 1px solid #bcd8c9; border-radius: 12px; color: #174f37; background: #e8f5ed; }
+.retail-card-selected-customer > div { display: grid; gap: 2px; }
+.retail-card-selected-customer small { color: #468069; font-size: 9px; font-weight: 900; letter-spacing: .08em; }
+.retail-card-selected-customer span { color: #61756b; font-size: 11px; }
+.retail-card-selection-help { margin-top: 14px; padding: 13px; border-radius: 11px; color: #735b27; background: #fff5dc; text-align: center; font-size: 12px; font-weight: 800; }
+.retail-card-modal-actions { display: grid; grid-template-columns: 1fr 1.7fr; gap: 9px; margin-top: 16px; }
+.retail-card-modal-actions button { min-height: 48px; border: 0; border-radius: 11px; padding: 10px; color: #36564a; background: #e8eeea; font-weight: 900; cursor: pointer; }
+.retail-card-modal-actions button.primary { color: white; background: #237153; }
+.retail-card-modal-actions button:disabled { cursor: not-allowed; opacity: .5; }
+
 .retail-drawer-backdrop { position: fixed; inset: 64px 0 0; z-index: 29; border: 0; background: rgb(10 30 23 / 34%); cursor: pointer; }
 .retail-drawer { position: fixed; inset: 64px 0 0 auto; z-index: 30; width: min(620px, 100%); overflow: auto; padding: 22px; background: white; box-shadow: -10px 0 35px rgb(9 31 23 / 22%); }
 .retail-drawer > h2 { margin: 5px 0 18px; font-family: Georgia, serif; font-size: 27px; }
@@ -272,4 +293,6 @@ button { touch-action: manipulation; }
   .retail-catalog-status { align-items: stretch; flex-direction: column; }
   .retail-cash-modal { padding: 22px 17px; }
   .retail-cash-bills { grid-template-columns: repeat(3, 1fr); }
+  .retail-card-assignment-modal { padding: 22px 17px; }
+  .retail-card-modal-actions { grid-template-columns: 1fr; }
 }

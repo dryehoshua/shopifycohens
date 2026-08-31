@@ -182,6 +182,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const shop = shopDomainFromDestination(sessionToken.dest);
     const body = (await request.json()) as Record<string, unknown>;
     const intent = String(body.intent ?? "reserve");
+    if (intent === "lookup") {
+      const member = await lookupNekudotMember(shop, body.credential);
+      return cors(Response.json({ ok: true, member: memberPayload(member) }));
+    }
     if (intent === "attach_order") {
       const result = await attachMemberToCompletedOrder({
         shop,
