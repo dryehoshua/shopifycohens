@@ -14,13 +14,11 @@ type GraphqlError = { message?: string };
 type CatalogEvidence = {
   id: string;
   sku: string | null;
-  variants: {
-    nodes: Array<{
-      id: string;
-      title: string;
-      barcode: string | null;
-      product: { id: string; title: string };
-    }>;
+  variant: {
+    id: string;
+    title: string;
+    barcode: string | null;
+    product: { id: string; title: string };
   };
   inventoryLevels: {
     nodes: Array<{
@@ -74,9 +72,7 @@ async function graphqlNodes(
               ... on InventoryItem {
                 id
                 sku
-                variants(first: 1) {
-                  nodes { id title barcode product { id title } }
-                }
+                variant { id title barcode product { id title } }
                 inventoryLevels(first: 100, includeInactive: false) {
                   nodes {
                     location { id name }
@@ -107,7 +103,7 @@ function isAdjustmentGroup(node: EvidenceNode): node is AdjustmentGroupEvidence 
 }
 
 function isCatalogEvidence(node: EvidenceNode): node is CatalogEvidence {
-  return Boolean(node && "inventoryLevels" in node && "variants" in node);
+  return Boolean(node && "inventoryLevels" in node && "variant" in node);
 }
 
 function availableAt(item: CatalogEvidence | undefined, locationId: string | null) {
@@ -350,7 +346,7 @@ export async function runInventoryReconciliation(
       const [inventoryItemId, locationId] = pair.split("|");
       const latest = events[events.length - 1];
       const item = catalog.get(inventoryItemId);
-      const variant = item?.variants.nodes[0];
+      const variant = item?.variant;
       const current = availableAt(item, locationId);
       const relatedMovement = movements
         .filter(
