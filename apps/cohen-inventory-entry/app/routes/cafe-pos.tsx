@@ -97,6 +97,9 @@ type Sale = {
   cancelledByName?: string | null;
   refundedAt?: string | null;
   refundedByName?: string | null;
+  nekudotEarnedCents?: number;
+  nekudotBalanceCents?: number;
+  nekudotAccrualPending?: boolean;
 };
 type StaffMember = {
   id: string;
@@ -373,7 +376,7 @@ export default function CafePos() {
     }
   }
 
-  async function printSale(sale: Sale) {
+  async function printSale(sale: Sale, completedSaleMessage?: string) {
     try {
       if (!printer.current) {
         const usb = (navigator as UsbNavigator).usb;
@@ -386,9 +389,17 @@ export default function CafePos() {
         await printer.current!.device.transferOut(printer.current!.endpoint, data.slice(offset, offset + 64));
       }
       await api(`/api/cafe-pos/receipt/${sale.id}`, { method: "POST", body: "{}" });
-      setMessage({ tone: "success", text: `Ticket ${sale.shopifyOrderName || sale.id.slice(-8)} impreso.` });
+      setMessage({
+        tone: "success",
+        text: completedSaleMessage
+          ? `${completedSaleMessage} Ticket impreso.`
+          : `Ticket ${sale.shopifyOrderName || sale.id.slice(-8)} impreso.`,
+      });
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo imprimir." });
+      const printError = error instanceof Error ? error.message : "No se pudo imprimir.";
+      setMessage(completedSaleMessage
+        ? { tone: "success", text: `${completedSaleMessage} Ticket pendiente: ${printError}` }
+        : { tone: "error", text: printError });
     }
   }
 
@@ -400,9 +411,13 @@ export default function CafePos() {
         body: JSON.stringify({ retrySaleId: sale.id }),
       });
       setSales((current) => [result.sale, ...current.filter((item) => item.id !== result.sale.id)]);
-      setMessage({ tone: "success", text: `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} sincronizada.` });
-      await printSale(result.sale);
-      await loadData();
+      const completedSaleMessage = `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} sincronizada.`;
+      setMessage({ tone: "success", text: completedSaleMessage });
+      await printSale(result.sale, completedSaleMessage);
+      await loadData().catch(() => setMessage((current) => ({
+        tone: "success",
+        text: `${current?.text || completedSaleMessage} El historial se actualizará automáticamente.`,
+      })));
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo reintentar la venta." });
     } finally { setBusy(false); }
@@ -496,9 +511,19 @@ export default function CafePos() {
       setCustomer(null);
       saleKey.current = newSaleKey();
       setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
-      setMessage({ tone: "success", text: `Venta ${result.sale.shopifyOrderName || result.sale.id.slice(-8)} registrada.` });
-      await printSale(result.sale);
-      await loadData();
+      const saleLabel = result.sale.shopifyOrderName || result.sale.id.slice(-8);
+      const nekudotMessage = result.sale.nekudotAccrualPending
+        ? " Cashback pendiente de conciliación automática."
+        : result.sale.nekudotEarnedCents != null
+          ? ` Cashback acreditado: ${formatMoney(result.sale.nekudotEarnedCents)}; saldo ${formatMoney(result.sale.nekudotBalanceCents ?? 0)}.`
+          : "";
+      const completedSaleMessage = `Venta ${saleLabel} registrada.${nekudotMessage}`;
+      setMessage({ tone: "success", text: completedSaleMessage });
+      await printSale(result.sale, completedSaleMessage);
+      await loadData().catch(() => setMessage((current) => ({
+        tone: "success",
+        text: `${current?.text || completedSaleMessage} El historial se actualizará automáticamente.`,
+      })));
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo registrar la venta." });
     } finally { setBusy(false); }

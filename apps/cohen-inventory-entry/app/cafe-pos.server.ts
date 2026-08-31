@@ -21,6 +21,7 @@ import {
   searchShopifyCustomers,
 } from "./nekudot.server";
 import { parseNekudotMoney } from "./nekudot-domain";
+import { syncSalesOrderFromAdmin } from "./sales-sync.server";
 
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
@@ -832,97 +833,99 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
     }
   }
 
+  let syncedSale;
   try {
     const reconciled = await findShopifyOrderBySale(admin, sale.id);
     if (reconciled) {
-      return db.cafeSale.update({
+      syncedSale = await db.cafeSale.update({
         where: { id: sale.id },
         data: { status: "SYNCED", shopifyOrderId: reconciled.id, shopifyOrderName: reconciled.name, syncedAt: new Date(), errorMessage: null },
         include: { staff: { select: { name: true } } },
       });
-    }
-    const currencyCode = "MXN";
-    const taxRate = rateBasisPoints / 10_000;
-    const customAttributes = [
-      { key: "cafe_pos_sale_id", value: sale.id },
-      { key: "cafe_pos_staff", value: sale.staff.name },
-      { key: "cafe_pos_payment", value: paymentGateway(method) },
-      ...(nekudotMember ? [{ key: "nekudot_member_id", value: nekudotMember.id }] : []),
-      ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
-    ];
-    const result = await graphql<{
-      orderCreate: {
-        order: { id: string; name: string } | null;
-        userErrors: Array<{ field?: string[]; message: string }>;
-      };
-    }>(admin, `#graphql
-      mutation CafePosOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
-        orderCreate(order: $order, options: $options) {
-          order { id name }
-          userErrors { field message }
+    } else {
+      const currencyCode = "MXN";
+      const taxRate = rateBasisPoints / 10_000;
+      const customAttributes = [
+        { key: "cafe_pos_sale_id", value: sale.id },
+        { key: "cafe_pos_staff", value: sale.staff.name },
+        { key: "cafe_pos_payment", value: paymentGateway(method) },
+        ...(nekudotMember ? [{ key: "nekudot_member_id", value: nekudotMember.id }] : []),
+        ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
+      ];
+      const result = await graphql<{
+        orderCreate: {
+          order: { id: string; name: string } | null;
+          userErrors: Array<{ field?: string[]; message: string }>;
+        };
+      }>(admin, `#graphql
+        mutation CafePosOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+          orderCreate(order: $order, options: $options) {
+            order { id name }
+            userErrors { field message }
+          }
         }
-      }
-    `, {
-      order: {
-        currency: currencyCode,
-        taxesIncluded: true,
-        lineItems: resolved.map((item) => ({
-          variantId: item.variantId,
-          quantity: item.quantity,
-          taxLines: rateBasisPoints
-            ? [{
-                title: "IVA",
-                rate: taxRate,
-                priceSet: { shopMoney: { amount: (includedTaxCents(item.totalCents, rateBasisPoints) / 100).toFixed(2), currencyCode } },
-              }]
-            : [],
-        })),
-        ...(nekudotRedeemedCents ? {
-          discountCode: {
-            itemFixedDiscountCode: {
-              code: `NEKUDOT-${nekudotRedemption!.id.slice(-8).toUpperCase()}`,
-              amountSet: {
-                shopMoney: { amount: (nekudotRedeemedCents / 100).toFixed(2), currencyCode },
+      `, {
+        order: {
+          currency: currencyCode,
+          taxesIncluded: true,
+          lineItems: resolved.map((item) => ({
+            variantId: item.variantId,
+            quantity: item.quantity,
+            taxLines: rateBasisPoints
+              ? [{
+                  title: "IVA",
+                  rate: taxRate,
+                  priceSet: { shopMoney: { amount: (includedTaxCents(item.totalCents, rateBasisPoints) / 100).toFixed(2), currencyCode } },
+                }]
+              : [],
+          })),
+          ...(nekudotRedeemedCents ? {
+            discountCode: {
+              itemFixedDiscountCode: {
+                code: `NEKUDOT-${nekudotRedemption!.id.slice(-8).toUpperCase()}`,
+                amountSet: {
+                  shopMoney: { amount: (nekudotRedeemedCents / 100).toFixed(2), currencyCode },
+                },
               },
             },
-          },
-        } : {}),
-        ...(selectedCustomer
-          ? { customer: { toAssociate: { id: selectedCustomer.id } } }
-          : {}),
-        ...(totalCents > 0
-          ? {
-              transactions: [{
-                kind: "SALE",
-                status: "SUCCESS",
-                gateway: paymentGateway(method),
-                locationId: location.id,
-                amountSet: { shopMoney: { amount: (totalCents / 100).toFixed(2), currencyCode } },
-              }],
-            }
-          : { financialStatus: "PAID" }),
-        fulfillmentStatus: "FULFILLED",
-        tags: ["cohens-cafe", "cafe-pos", `cafe-pos-${sale.id}`],
-        note: `Venta de POS web. Empleado: ${sale.staff.name}. Turno: ${shift.id}.`,
-        customAttributes,
-        processedAt: new Date().toISOString(),
-      },
-      options: { inventoryBehaviour: "DECREMENT_OBEYING_POLICY", sendReceipt: false, sendFulfillmentReceipt: false },
-    });
-    if (result.orderCreate.userErrors.length || !result.orderCreate.order) {
-      throw new CafePosError(result.orderCreate.userErrors.map((error) => error.message).join("; ") || "Shopify no creó el pedido.", 502, "ORDER_REJECTED");
+          } : {}),
+          ...(selectedCustomer
+            ? { customer: { toAssociate: { id: selectedCustomer.id } } }
+            : {}),
+          ...(totalCents > 0
+            ? {
+                transactions: [{
+                  kind: "SALE",
+                  status: "SUCCESS",
+                  gateway: paymentGateway(method),
+                  locationId: location.id,
+                  amountSet: { shopMoney: { amount: (totalCents / 100).toFixed(2), currencyCode } },
+                }],
+              }
+            : { financialStatus: "PAID" }),
+          fulfillmentStatus: "FULFILLED",
+          tags: ["cohens-cafe", "cafe-pos", `cafe-pos-${sale.id}`],
+          note: `Venta de POS web. Empleado: ${sale.staff.name}. Turno: ${shift.id}.`,
+          customAttributes,
+          processedAt: new Date().toISOString(),
+        },
+        options: { inventoryBehaviour: "DECREMENT_OBEYING_POLICY", sendReceipt: false, sendFulfillmentReceipt: false },
+      });
+      if (result.orderCreate.userErrors.length || !result.orderCreate.order) {
+        throw new CafePosError(result.orderCreate.userErrors.map((error) => error.message).join("; ") || "Shopify no creó el pedido.", 502, "ORDER_REJECTED");
+      }
+      syncedSale = await db.cafeSale.update({
+        where: { id: sale.id },
+        data: {
+          status: "SYNCED",
+          shopifyOrderId: result.orderCreate.order.id,
+          shopifyOrderName: result.orderCreate.order.name,
+          syncedAt: new Date(),
+          errorMessage: null,
+        },
+        include: { staff: { select: { name: true } } },
+      });
     }
-    return db.cafeSale.update({
-      where: { id: sale.id },
-      data: {
-        status: "SYNCED",
-        shopifyOrderId: result.orderCreate.order.id,
-        shopifyOrderName: result.orderCreate.order.name,
-        syncedAt: new Date(),
-        errorMessage: null,
-      },
-      include: { staff: { select: { name: true } } },
-    });
   } catch (error) {
     await db.cafeSale.update({
       where: { id: sale.id },
@@ -933,6 +936,42 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
       503,
       "ORDER_PENDING_SYNC",
     );
+  }
+
+  if (!nekudotMember || !syncedSale.shopifyOrderId) return syncedSale;
+
+  try {
+    await syncSalesOrderFromAdmin({
+      admin,
+      sourceShop: session!.shop,
+      orderId: syncedSale.shopifyOrderId,
+      webhookId: `cafe-pos:${sale.id}:${syncedSale.shopifyOrderId}`,
+      topic: "CAFE_POS_ORDER_CREATED",
+    });
+    const [accrual, refreshedMember] = await Promise.all([
+      db.nekudotOrderAccrual.findUnique({
+        where: {
+          shop_shopifyOrderId: {
+            shop: session!.shop,
+            shopifyOrderId: syncedSale.shopifyOrderId,
+          },
+        },
+      }),
+      db.nekudotMember.findUnique({ where: { id: nekudotMember.id } }),
+    ]);
+    return {
+      ...syncedSale,
+      nekudotEarnedCents: accrual?.clientEarnedCents ?? 0,
+      nekudotBalanceCents: refreshedMember?.balanceCents ?? nekudotMember.balanceCents,
+      nekudotAccrualPending: false,
+    };
+  } catch (error) {
+    console.error("Cafe POS order synced but immediate Nekudot reconciliation failed", {
+      saleId: sale.id,
+      shopifyOrderId: syncedSale.shopifyOrderId,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    return { ...syncedSale, nekudotAccrualPending: true };
   }
 }
 
@@ -1076,6 +1115,9 @@ export async function markCafeReceiptPrinted(request: Request, saleId: string) {
 }
 
 export function cafePosJsonError(error: unknown) {
+  if (!(error instanceof CafePosError)) {
+    console.error("Cafe POS request failed", error);
+  }
   const known = error instanceof CafePosError ? error : new CafePosError(error instanceof Error ? error.message : "Error desconocido.", 500, "INTERNAL_ERROR");
   return Response.json({ ok: false, error: known.message, code: known.code }, { status: known.status });
 }
