@@ -44,50 +44,63 @@ export function NfcBridgeReader({ onCredential, compact = false, className = "" 
     const currentRun = runId.current + 1;
     runId.current = currentRun;
     setState("connecting");
-    try {
-      const healthResponse = await bridgeFetch("/health");
-      if (!healthResponse.ok) throw new Error("El puente NFC rechazó la conexión.");
-      let health = await healthResponse.json() as NfcBridgeHealth;
-      let sequence = health.sequence || 0;
-      if (health.reader) setReaderName(health.reader);
-      setState(health.readerConnected ? "ready" : "waiting");
+    while (runId.current === currentRun) {
+      try {
+        const healthResponse = await bridgeFetch("/health");
+        if (!healthResponse.ok) throw new Error("El puente NFC rechazó la conexión.");
+        let health = await healthResponse.json() as NfcBridgeHealth;
+        let sequence = health.sequence || 0;
+        if (health.reader) setReaderName(health.reader);
+        setState(health.readerConnected ? "ready" : "waiting");
 
-      while (runId.current === currentRun) {
-        if (!health.readerConnected) {
-          await wait(900);
-          const nextHealthResponse = await bridgeFetch("/health");
-          if (!nextHealthResponse.ok) throw new Error("No se pudo consultar el lector.");
-          health = await nextHealthResponse.json() as NfcBridgeHealth;
-          if (health.reader) setReaderName(health.reader);
-          setState(health.readerConnected ? "ready" : "waiting");
-          sequence = Math.max(sequence, health.sequence || 0);
-          continue;
-        }
+        while (runId.current === currentRun) {
+          if (!health.readerConnected) {
+            await wait(900);
+            const nextHealthResponse = await bridgeFetch("/health");
+            if (!nextHealthResponse.ok) throw new Error("No se pudo consultar el lector.");
+            health = await nextHealthResponse.json() as NfcBridgeHealth;
+            if (health.reader) setReaderName(health.reader);
+            setState(health.readerConnected ? "ready" : "waiting");
+            sequence = Math.max(sequence, health.sequence || 0);
+            continue;
+          }
 
-        const eventResponse = await bridgeFetch(`/events?after=${sequence}`);
-        if (eventResponse.status === 204) {
-          await wait(450);
-          continue;
+          const eventResponse = await bridgeFetch(`/events?after=${sequence}`);
+          if (eventResponse.status === 204) {
+            await wait(450);
+            continue;
+          }
+          if (!eventResponse.ok) throw new Error("No se pudo recibir la lectura NFC.");
+          const event = await eventResponse.json() as NfcBridgeEvent;
+          sequence = event.sequence;
+          const credential = nfcBridgeEventCredential(event);
+          setLastFour(credential.slice(-4));
+          setState("read");
+          onCredentialRef.current(credential);
+          await wait(1_100);
+          if (runId.current === currentRun) setState("ready");
         }
-        if (!eventResponse.ok) throw new Error("No se pudo recibir la lectura NFC.");
-        const event = await eventResponse.json() as NfcBridgeEvent;
-        sequence = event.sequence;
-        const credential = nfcBridgeEventCredential(event);
-        setLastFour(credential.slice(-4));
-        setState("read");
-        onCredentialRef.current(credential);
-        await wait(1_100);
-        if (runId.current === currentRun) setState("ready");
+      } catch (error) {
+        if (runId.current !== currentRun) return;
+        setState(error instanceof DOMException && error.name === "AbortError" ? "disconnected" : "error");
+        await wait(1_500);
+        if (runId.current === currentRun) setState("connecting");
       }
-    } catch (error) {
-      if (runId.current !== currentRun) return;
-      setState(error instanceof DOMException && error.name === "AbortError" ? "disconnected" : "error");
     }
   }, []);
 
   useEffect(() => {
     void connect();
-    return () => { runId.current += 1; };
+    const reconnect = () => { if (!document.hidden) void connect(); };
+    window.addEventListener("focus", reconnect);
+    window.addEventListener("online", reconnect);
+    document.addEventListener("visibilitychange", reconnect);
+    return () => {
+      runId.current += 1;
+      window.removeEventListener("focus", reconnect);
+      window.removeEventListener("online", reconnect);
+      document.removeEventListener("visibilitychange", reconnect);
+    };
   }, [connect]);
 
   const labels: Record<ReaderState, string> = {

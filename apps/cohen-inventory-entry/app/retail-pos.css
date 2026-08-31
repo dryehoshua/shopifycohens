@@ -108,6 +108,8 @@ button { touch-action: manipulation; }
 .retail-customer-card strong, .retail-customer-card small { display: block; }
 .retail-customer-card small { margin-top: 3px; color: #796543; font-size: 11px; }
 .retail-customer-card button { flex: 0 0 auto; border: 0; border-radius: 8px; padding: 8px 10px; color: white; background: #23684e; font-size: 11px; font-weight: 900; cursor: pointer; }
+.retail-checkout-reader.nfc-compact { margin: 0 0 10px; border-color: #cfdad3; color: #264b38; background: #f3f8f5; }
+.retail-checkout-reader.nfc-compact button { border-color: #91ae9d; color: #285941; background: white; }
 .retail-loyalty-summary { display: grid; gap: 3px; padding: 11px 12px; border-radius: 10px; color: #50665d; background: #eef2ef; }
 .retail-loyalty-summary > span { font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
 .retail-loyalty-summary strong { font-size: 17px; }

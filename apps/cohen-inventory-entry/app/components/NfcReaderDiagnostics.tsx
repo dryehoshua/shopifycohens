@@ -153,7 +153,7 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
           if (!active) return;
           setHealth(null);
           setLatencyMs(null);
-          setBridgeError(error instanceof TypeError
+          setBridgeError(error instanceof TypeError || error instanceof SyntaxError
             ? "Modo seguro del navegador · esperando lectura por teclado"
             : error instanceof Error ? error.message : "No se pudo conectar con el puente local.");
         }

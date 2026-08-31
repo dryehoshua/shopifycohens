@@ -113,9 +113,11 @@ su HMAC.
 En **Retail POS > Lector NFC**, descarga **Instalar en Windows** y abre
 `cohens-nfc-windows.cmd`. El instalador configura Node.js, compila el lector
 PC/SC, instala el puente para el usuario actual y lo inicia automáticamente con
-Windows. Antes de instalar verifica por SHA-256 el instalador, Node.js, el
-lector y el propio puente. Al terminar, realiza tres lecturas estables desde la
-prueba de la POS.
+Windows. Un watchdog mantiene vivo el proceso y lo reinicia dos segundos después
+de cualquier cierre inesperado. La POS también vuelve a conectarse al abrirse,
+al recuperar el foco o cuando regresa la conexión. Antes de instalar verifica
+por SHA-256 el instalador, Node.js, el lector, el watchdog y el propio puente.
+Al terminar, realiza tres lecturas estables desde la prueba de la POS.
 
 ### macOS y desarrollo local
 

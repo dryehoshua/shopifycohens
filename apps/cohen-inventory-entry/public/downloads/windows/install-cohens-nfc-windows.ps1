@@ -8,6 +8,7 @@ $BaseUrl = "https://cohens-operations-production.up.railway.app"
 $NodeReleaseUrl = "https://nodejs.org/download/release/latest-v22.x"
 $ReaderSourceSha256 = "515235EC761C6A06C54429B87CF602D2DD0CF61D7536EB4E332284EE80F4594A"
 $BridgeScriptSha256 = "B2A511E842F801A6E84DFD1395431AF97D2DED734FF7CB07A5C9A806744561A6"
+$LauncherScriptSha256 = "06F3E4E5C4DBC15DC38DA3B92D7A7344FB06C93A1B157C0B37768994F09B52D9"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "Cohens\NFC"
 $BinDirectory = Join-Path $AppDirectory "bin"
 $LogDirectory = Join-Path $AppDirectory "logs"
@@ -46,7 +47,7 @@ try {
   Write-Step 1 "Preparando Cohen's NFC para este usuario..."
   New-Item -ItemType Directory -Force -Path $AppDirectory, $BinDirectory, $LogDirectory | Out-Null
   Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -like "*nekudot-nfc-bridge.mjs*" } |
+    Where-Object { $_.CommandLine -and ($_.CommandLine -like "*nekudot-nfc-bridge.mjs*" -or $_.CommandLine -like "*start-cohens-nfc.ps1*") } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Milliseconds 500
 
@@ -87,6 +88,13 @@ try {
   if ($ActualBridgeScriptHash -ne $BridgeScriptSha256) {
     throw "La verificación SHA-256 del puente NFC no coincidió. Instalación cancelada."
   }
+  $DownloadedLauncher = Join-Path $TemporaryDirectory "start-cohens-nfc.ps1"
+  Download-File "$BaseUrl/downloads/windows/start-cohens-nfc.ps1" $DownloadedLauncher
+  $ActualLauncherScriptHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $DownloadedLauncher).Hash.ToUpperInvariant()
+  if ($ActualLauncherScriptHash -ne $LauncherScriptSha256) {
+    throw "La verificación SHA-256 del watchdog NFC no coincidió. Instalación cancelada."
+  }
+  Copy-Item -LiteralPath $DownloadedLauncher -Destination $LauncherScript -Force
   $ReaderSource = Join-Path $TemporaryDirectory "acr122u-reader-windows.cs"
   Download-File "$BaseUrl/downloads/windows/acr122u-reader-windows.cs" $ReaderSource
   $ActualReaderSourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ReaderSource).Hash.ToUpperInvariant()
@@ -102,17 +110,6 @@ try {
     throw "Windows no pudo compilar el controlador local del lector."
   }
 
-  $LauncherContents = @'
-$ErrorActionPreference = "Stop"
-$env:NEKUDOT_NFC_READER_EXECUTABLE = Join-Path $PSScriptRoot "bin\acr122u-reader.exe"
-$env:NEKUDOT_NFC_ALLOWED_ORIGINS = "https://cohens-operations-production.up.railway.app"
-$env:NEKUDOT_NFC_KEYBOARD_FALLBACK = "1"
-& (Join-Path $PSScriptRoot "bin\node.exe") (Join-Path $PSScriptRoot "nekudot-nfc-bridge.mjs") `
-  1>> (Join-Path $PSScriptRoot "logs\bridge.log") `
-  2>> (Join-Path $PSScriptRoot "logs\bridge-error.log")
-'@
-  Set-Content -LiteralPath $LauncherScript -Value $LauncherContents -Encoding UTF8
-
   Write-Step 5 "Activando el lector automáticamente al iniciar Windows..."
   $StartupDirectory = [Environment]::GetFolderPath("Startup")
   $ShortcutPath = Join-Path $StartupDirectory "Cohens Nekudot NFC.lnk"
@@ -126,7 +123,7 @@ $env:NEKUDOT_NFC_KEYBOARD_FALLBACK = "1"
   $Shortcut.Save()
 
   Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -like "*nekudot-nfc-bridge.mjs*" } |
+    Where-Object { $_.CommandLine -and ($_.CommandLine -like "*nekudot-nfc-bridge.mjs*" -or $_.CommandLine -like "*start-cohens-nfc.ps1*") } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Process -FilePath $PowerShellExecutable -ArgumentList @(
     "-NoProfile",
@@ -159,7 +156,7 @@ $env:NEKUDOT_NFC_KEYBOARD_FALLBACK = "1"
     Write-Host ("Revisa el registro: {0}" -f (Join-Path $LogDirectory "bridge-error.log")) -ForegroundColor Yellow
   }
 
-  Set-Content -LiteralPath (Join-Path $AppDirectory "installed-version.txt") -Value "1.0.0" -Encoding ASCII
+  Set-Content -LiteralPath (Join-Path $AppDirectory "installed-version.txt") -Value "1.1.0" -Encoding ASCII
   Start-Process "$BaseUrl/retail-pos"
   Write-Host ""
   Write-Host "Instalación terminada. Abre Lector NFC y realiza tres lecturas de prueba." -ForegroundColor Green

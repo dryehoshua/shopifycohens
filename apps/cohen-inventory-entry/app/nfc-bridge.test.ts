@@ -61,6 +61,7 @@ test("el instalador Windows verifica exactamente el PowerShell publicado", () =>
   const installer = readFileSync(new URL("../public/downloads/windows/install-cohens-nfc-windows.ps1", import.meta.url));
   const installerText = installer.toString("utf8");
   const readerSource = readFileSync(new URL("../public/downloads/windows/acr122u-reader-windows.cs", import.meta.url));
+  const launcherScript = readFileSync(new URL("../public/downloads/windows/start-cohens-nfc.ps1", import.meta.url));
   const bridgeScript = readFileSync(new URL("../scripts/nekudot-nfc-bridge.mjs", import.meta.url));
   const publishedHash = (contents: Buffer) => createHash("sha256")
     .update(contents.toString("utf8").replace(/\r\n/g, "\n"))
@@ -70,10 +71,16 @@ test("el instalador Windows verifica exactamente el PowerShell publicado", () =>
   const actualHash = publishedHash(installer);
   const expectedReaderHash = installerText.match(/\$ReaderSourceSha256 = "([A-F0-9]{64})"/)?.[1];
   const actualReaderHash = publishedHash(readerSource);
+  const expectedLauncherHash = installerText.match(/\$LauncherScriptSha256 = "([A-F0-9]{64})"/)?.[1];
+  const actualLauncherHash = publishedHash(launcherScript);
   const expectedBridgeHash = installerText.match(/\$BridgeScriptSha256 = "([A-F0-9]{64})"/)?.[1];
   const actualBridgeHash = publishedHash(bridgeScript);
   assert.equal(expectedHash, actualHash);
   assert.equal(expectedReaderHash, actualReaderHash);
+  assert.equal(expectedLauncherHash, actualLauncherHash);
   assert.equal(expectedBridgeHash, actualBridgeHash);
+  assert.match(launcherScript.toString("utf8"), /CohensNekudotNfcWatchdog/);
+  assert.match(launcherScript.toString("utf8"), /while \(\$true\)/);
+  assert.match(launcherScript.toString("utf8"), /se reiniciará/);
   assert.match(command, /Get-FileHash -Algorithm SHA256/);
 });
