@@ -716,7 +716,7 @@ export default function CafePos() {
     {drawer ? <><button type="button" className="drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="drawer">
       <button className="btn btn-secondary" onClick={() => setDrawer(null)}>Cerrar</button>
       {drawer === "orders" ? <><h2>Pedidos recientes</h2>{sales.map((sale) => <div className="sale-card" key={sale.id}>
-        <div className="sale-card-head"><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><br /><small>{new Date(sale.createdAt).toLocaleString("es-MX")} · {sale.staff.name}</small></div><strong>{formatMoney(sale.totalCents)}</strong></div>
+        <div className="sale-card-head"><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><br /><small>{new Date(sale.createdAt).toLocaleString("es-MX")}</small><br /><small>Atendió: {sale.staff.name}</small><br /><small>Cliente: {sale.customerName || "Sin asignar"}</small></div><strong>{formatMoney(sale.totalCents)}</strong></div>
         <span className={`badge ${sale.status !== "SYNCED" && sale.status !== "REFUNDED" && sale.status !== "CANCELLED" ? "pending" : ""}`}>{sale.status === "SYNCED" ? "Sincronizado" : sale.status === "REFUNDED" ? "Reembolsado" : sale.status === "CANCELLED" ? "Cancelado" : "Pendiente"}</span>
         {sale.status === "REFUNDED" && sale.refundedByName ? <div className="status status-info">Reembolsado por {sale.refundedByName}. Se conserva en el historial.</div> : null}
         {sale.status === "CANCELLED" && sale.cancelledByName ? <div className="status status-info">Cancelado por {sale.cancelledByName}.</div> : null}
