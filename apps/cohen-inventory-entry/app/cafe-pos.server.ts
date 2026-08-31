@@ -15,13 +15,13 @@ import {
   bindNekudotCredential,
   cancelNekudotReservation,
   lookupNekudotMember,
+  reconcileNekudotOrder,
   replaceNekudotCredential,
   renewNekudotReservation,
   reserveNekudot,
   searchShopifyCustomers,
 } from "./nekudot.server";
 import { parseNekudotMoney } from "./nekudot-domain";
-import { syncSalesOrderFromAdmin } from "./sales-sync.server";
 
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
@@ -817,8 +817,8 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
           totalCents,
           items: receiptItems,
           customerId: selectedCustomer?.id ?? null,
-          customerName: selectedCustomer?.name ?? null,
-          customerEmail: selectedCustomer?.email ?? null,
+          customerName: selectedCustomer?.name ?? nekudotMember?.displayName ?? null,
+          customerEmail: selectedCustomer?.email ?? nekudotMember?.email ?? null,
           nekudotMemberId: nekudotMember?.id ?? null,
           nekudotRedemptionId: nekudotRedemption?.id ?? null,
           nekudotRedeemedCents,
@@ -850,6 +850,7 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
         { key: "cafe_pos_staff", value: sale.staff.name },
         { key: "cafe_pos_payment", value: paymentGateway(method) },
         ...(nekudotMember ? [{ key: "nekudot_member_id", value: nekudotMember.id }] : []),
+        ...(nekudotMember ? [{ key: "nekudot_member_name", value: nekudotMember.displayName }] : []),
         ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
       ];
       const result = await graphql<{
@@ -941,24 +942,22 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
   if (!nekudotMember || !syncedSale.shopifyOrderId) return syncedSale;
 
   try {
-    await syncSalesOrderFromAdmin({
-      admin,
-      sourceShop: session!.shop,
-      orderId: syncedSale.shopifyOrderId,
-      webhookId: `cafe-pos:${sale.id}:${syncedSale.shopifyOrderId}`,
-      topic: "CAFE_POS_ORDER_CREATED",
+    const accrual = await reconcileNekudotOrder({
+      shop: session!.shop,
+      shopifyOrderId: syncedSale.shopifyOrderId,
+      orderName: syncedSale.shopifyOrderName ?? sale.id,
+      customerId: selectedCustomer?.id ?? null,
+      currencyCode: "MXN",
+      eligibleFinancialStatus: true,
+      cancelled: false,
+      orderUpdatedAt: syncedSale.syncedAt ?? new Date(),
+      purchaseCents: totalCents,
+      customAttributes: [
+        { key: "nekudot_member_id", value: nekudotMember.id },
+        ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
+      ],
     });
-    const [accrual, refreshedMember] = await Promise.all([
-      db.nekudotOrderAccrual.findUnique({
-        where: {
-          shop_shopifyOrderId: {
-            shop: session!.shop,
-            shopifyOrderId: syncedSale.shopifyOrderId,
-          },
-        },
-      }),
-      db.nekudotMember.findUnique({ where: { id: nekudotMember.id } }),
-    ]);
+    const refreshedMember = await db.nekudotMember.findUnique({ where: { id: nekudotMember.id } });
     return {
       ...syncedSale,
       nekudotEarnedCents: accrual?.clientEarnedCents ?? 0,
