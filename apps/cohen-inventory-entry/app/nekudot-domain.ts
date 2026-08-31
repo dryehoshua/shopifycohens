@@ -57,6 +57,19 @@ export function calculateNekudotPurchase(purchaseCents: number, hasBroker: boole
   };
 }
 
+export function calculateNekudotEligiblePurchaseCents(
+  currentTotalCents: number,
+  refundedPaymentCents: number,
+) {
+  if (![currentTotalCents, refundedPaymentCents].every(Number.isInteger)) {
+    throw new Error("Los importes de compra y devolución no son válidos.");
+  }
+  if (currentTotalCents < 0 || refundedPaymentCents < 0) {
+    throw new Error("Los importes de compra y devolución no pueden ser negativos.");
+  }
+  return Math.max(0, currentTotalCents - refundedPaymentCents);
+}
+
 export function calculateRestoredRedemptionCents(
   redeemedCents: number,
   originalPurchaseCents: number,

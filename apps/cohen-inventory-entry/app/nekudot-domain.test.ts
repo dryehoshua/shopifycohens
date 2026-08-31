@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateNekudotPurchase,
+  calculateNekudotEligiblePurchaseCents,
   calculateRateCents,
   calculateRestoredRedemptionCents,
   normalizeNekudotCredential,
@@ -21,6 +22,12 @@ test("acredita 5% al cliente y 5% al broker", () => {
 
 test("no genera comisión cuando el cliente no tiene broker", () => {
   assert.equal(calculateNekudotPurchase(10_000, false).brokerEarnedCents, 0);
+});
+
+test("calcula cashback sobre el total pagado y descuenta devoluciones", () => {
+  assert.equal(calculateNekudotEligiblePurchaseCents(12_000, 0), 12_000);
+  assert.equal(calculateNekudotEligiblePurchaseCents(12_000, 6_000), 6_000);
+  assert.equal(calculateNekudotEligiblePurchaseCents(12_000, 15_000), 0);
 });
 
 test("normaliza códigos de broker", () => {

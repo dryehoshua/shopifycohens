@@ -3,6 +3,7 @@ import type {
 } from "@shopify/shopify-app-react-router/server";
 import type { Prisma } from "@prisma/client";
 import db from "./db.server";
+import { calculateNekudotEligiblePurchaseCents } from "./nekudot-domain";
 import { reconcileNekudotOrder } from "./nekudot.server";
 
 type ShopifyMoney = {
@@ -511,10 +512,9 @@ export async function syncSalesOrderFromAdmin({
       eligibleFinancialStatus: summary.order.includedInProfit,
       cancelled: Boolean(summary.order.cancelledAt),
       orderUpdatedAt: summary.cashback.orderUpdatedAt,
-      purchaseCents: summary.lineItems.reduce(
-        (total: number, lineItem: ShopifyOrder) =>
-          total + Math.max(0, lineItem.netSalesCents),
-        0,
+      purchaseCents: calculateNekudotEligiblePurchaseCents(
+        summary.order.currentTotalCents,
+        summary.order.refundedPaymentCents,
       ),
       customAttributes: summary.cashback.customAttributes,
     });
