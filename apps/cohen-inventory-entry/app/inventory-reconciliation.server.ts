@@ -44,9 +44,12 @@ async function graphqlNodes(
   kind: "adjustments" | "items",
 ) {
   const nodes: EvidenceNode[] = [];
-  for (const idChunk of chunks(Array.from(new Set(ids)), 75)) {
+  // Cada InventoryItem puede solicitar hasta 100 InventoryLevels. Cinco artículos
+  // mantienen el costo solicitado por debajo del máximo de 1,000 puntos de Shopify.
+  const chunkSize = kind === "items" ? 5 : 75;
+  for (const idChunk of chunks(Array.from(new Set(ids)), chunkSize)) {
     if (!idChunk.length) continue;
-    const response = await admin.graphql(
+    const query =
       kind === "adjustments"
         ? `#graphql
           query CohenInventoryAdjustmentEvidence($ids: [ID!]!) {
@@ -84,9 +87,24 @@ async function graphqlNodes(
                 }
               }
             }
-          }`,
-      { variables: { ids: idChunk } },
-    );
+          }`;
+    let response: Response;
+    try {
+      response = await admin.graphql(query, { variables: { ids: idChunk } });
+    } catch (error) {
+      const graphQLErrors = (
+        error as { errors?: { graphQLErrors?: Array<{ message?: string }> } }
+      ).errors?.graphQLErrors;
+      const detail = graphQLErrors
+        ?.map((graphQLError) => graphQLError.message)
+        .filter(Boolean)
+        .join("; ");
+      throw new Error(
+        `Shopify rechazó la consulta de evidencia ${kind}: ${
+          detail || (error instanceof Error ? error.message : "error desconocido")
+        }`,
+      );
+    }
     const payload = (await response.json()) as {
       data?: { nodes?: EvidenceNode[] };
       errors?: GraphqlError[];
