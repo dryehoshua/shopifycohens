@@ -44,4 +44,7 @@ knowledge-base/ESTADO_ACTUAL_2026-07-27.md
 
 # Herramientas locales de generación y auditoría.
 scripts/
+!apps/cohen-inventory-entry/scripts/
+apps/cohen-inventory-entry/scripts/*
+!apps/cohen-inventory-entry/scripts/run-inventory-reconciliation-cron.mjs
 tools/

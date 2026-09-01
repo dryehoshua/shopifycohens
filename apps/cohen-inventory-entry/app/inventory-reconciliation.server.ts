@@ -14,13 +14,11 @@ type GraphqlError = { message?: string };
 type CatalogEvidence = {
   id: string;
   sku: string | null;
-  variants: {
-    nodes: Array<{
-      id: string;
-      title: string;
-      barcode: string | null;
-      product: { id: string; title: string };
-    }>;
+  variant: {
+    id: string;
+    title: string;
+    barcode: string | null;
+    product: { id: string; title: string };
   };
   inventoryLevels: {
     nodes: Array<{
@@ -46,9 +44,12 @@ async function graphqlNodes(
   kind: "adjustments" | "items",
 ) {
   const nodes: EvidenceNode[] = [];
-  for (const idChunk of chunks(Array.from(new Set(ids)), 75)) {
+  // Cada InventoryItem puede solicitar hasta 100 InventoryLevels. Cinco artículos
+  // mantienen el costo solicitado por debajo del máximo de 1,000 puntos de Shopify.
+  const chunkSize = kind === "items" ? 5 : 75;
+  for (const idChunk of chunks(Array.from(new Set(ids)), chunkSize)) {
     if (!idChunk.length) continue;
-    const response = await admin.graphql(
+    const query =
       kind === "adjustments"
         ? `#graphql
           query CohenInventoryAdjustmentEvidence($ids: [ID!]!) {
@@ -74,9 +75,7 @@ async function graphqlNodes(
               ... on InventoryItem {
                 id
                 sku
-                variants(first: 1) {
-                  nodes { id title barcode product { id title } }
-                }
+                variant { id title barcode product { id title } }
                 inventoryLevels(first: 100, includeInactive: false) {
                   nodes {
                     location { id name }
@@ -88,9 +87,24 @@ async function graphqlNodes(
                 }
               }
             }
-          }`,
-      { variables: { ids: idChunk } },
-    );
+          }`;
+    let response: Response;
+    try {
+      response = await admin.graphql(query, { variables: { ids: idChunk } });
+    } catch (error) {
+      const graphQLErrors = (
+        error as { errors?: { graphQLErrors?: Array<{ message?: string }> } }
+      ).errors?.graphQLErrors;
+      const detail = graphQLErrors
+        ?.map((graphQLError) => graphQLError.message)
+        .filter(Boolean)
+        .join("; ");
+      throw new Error(
+        `Shopify rechazó la consulta de evidencia ${kind}: ${
+          detail || (error instanceof Error ? error.message : "error desconocido")
+        }`,
+      );
+    }
     const payload = (await response.json()) as {
       data?: { nodes?: EvidenceNode[] };
       errors?: GraphqlError[];
@@ -107,7 +121,7 @@ function isAdjustmentGroup(node: EvidenceNode): node is AdjustmentGroupEvidence 
 }
 
 function isCatalogEvidence(node: EvidenceNode): node is CatalogEvidence {
-  return Boolean(node && "inventoryLevels" in node && "variants" in node);
+  return Boolean(node && "inventoryLevels" in node && "variant" in node);
 }
 
 function availableAt(item: CatalogEvidence | undefined, locationId: string | null) {
@@ -350,7 +364,7 @@ export async function runInventoryReconciliation(
       const [inventoryItemId, locationId] = pair.split("|");
       const latest = events[events.length - 1];
       const item = catalog.get(inventoryItemId);
-      const variant = item?.variants.nodes[0];
+      const variant = item?.variant;
       const current = availableAt(item, locationId);
       const relatedMovement = movements
         .filter(

@@ -4,6 +4,7 @@ import type {
 import type { Prisma } from "@prisma/client";
 import db from "./db.server";
 import { reconcileNekudotOrder } from "./nekudot.server";
+import { nekudotPurchaseCentsForSyncedOrder } from "./sales-sync-domain";
 
 type ShopifyMoney = {
   amount?: string | null;
@@ -511,11 +512,13 @@ export async function syncSalesOrderFromAdmin({
       eligibleFinancialStatus: summary.order.includedInProfit,
       cancelled: Boolean(summary.order.cancelledAt),
       orderUpdatedAt: summary.cashback.orderUpdatedAt,
-      purchaseCents: summary.lineItems.reduce(
-        (total: number, lineItem: ShopifyOrder) =>
-          total + Math.max(0, lineItem.netSalesCents),
-        0,
-      ),
+      purchaseCents: nekudotPurchaseCentsForSyncedOrder({
+        currentTotalCents: summary.order.currentTotalCents,
+        lineNetSalesCents: summary.lineItems.map(
+          (lineItem: ShopifyOrder) => lineItem.netSalesCents,
+        ),
+        customAttributes: summary.cashback.customAttributes,
+      }),
       customAttributes: summary.cashback.customAttributes,
     });
     await db.salesSyncRun.update({
