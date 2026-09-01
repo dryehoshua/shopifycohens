@@ -594,7 +594,11 @@ model NekudotMember {
   displayName           String
   email                 String?
   phone                 String?
+  community             String?
+  photoFileName         String?
   active                Boolean        @default(true)
+  cardTier              String         @default("SILVER")
+  enrollmentStatus      String         @default("ACTIVE")
   currencyCode          String         @default("MXN")
   balanceCents          Int            @default(0)
   reservedCents         Int            @default(0)
@@ -610,10 +614,50 @@ model NekudotMember {
   ledger      NekudotLedgerEntry[]
   accruals    NekudotOrderAccrual[]
   redemptions NekudotRedemption[]
+  portalSessions NekudotPortalSession[]
+  membershipPayments NekudotMembershipPayment[]
 
   @@index([programKey, active, updatedAt])
   @@index([brokerId, active])
   @@index([programKey, displayName])
+}
+
+/// Sesion del portal del miembro creada solamente despues de validar un OTP.
+/// El navegador conserva el token y la base unicamente su hash SHA-256.
+model NekudotPortalSession {
+  id         String        @id @default(cuid())
+  tokenHash  String        @unique
+  memberId   String
+  member     NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+  lastSeenAt DateTime      @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([memberId, expiresAt])
+}
+
+/// Suscripcion mensual Golden mediante Mercado Pago. Los webhooks firmados
+/// mantienen sincronizados el cobro, la autorizacion y las pausas/cancelaciones.
+model NekudotMembershipPayment {
+  id                String        @id @default(cuid())
+  memberId          String
+  member            NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  provider          String        @default("MERCADO_PAGO")
+  status            String        @default("PENDING")
+  externalReference String        @unique
+  preferenceId      String?       @unique
+  subscriptionId    String?       @unique
+  paymentId         String?       @unique
+  amountCents       Int
+  currencyCode      String        @default("MXN")
+  checkoutUrl       String?
+  rawPayload        Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  paidAt            DateTime?
+
+  @@index([memberId, status, createdAt])
 }
 
 /// Perfil comercial del broker. La comisión no se mezcla con los Nekudot
@@ -635,9 +679,25 @@ model NekudotBroker {
   clients  NekudotMember[]
   ledger   NekudotLedgerEntry[]
   accruals NekudotOrderAccrual[]
+  portalSessions NekudotBrokerSession[]
 
   @@unique([programKey, code])
   @@index([programKey, active, displayName])
+}
+
+/// Sesion privada de un IB creada despues de verificar por SMS el telefono
+/// registrado en su perfil. El token original nunca se guarda en la base.
+model NekudotBrokerSession {
+  id         String        @id @default(cuid())
+  tokenHash  String        @unique
+  brokerId   String
+  broker     NekudotBroker @relation(fields: [brokerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+  lastSeenAt DateTime      @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([brokerId, expiresAt])
 }
 
 /// Enlace entre el miembro central y su perfil de cliente en cada tienda.
@@ -709,7 +769,7 @@ model NekudotLedgerEntry {
   @@index([programKey, source, sourceId])
 }
 
-/// Resultado vigente de aplicar 5% al cliente y 5% a su broker en un pedido.
+/// Resultado vigente de aplicar la tasa de la tarjeta al cliente y 5% a su broker.
 model NekudotOrderAccrual {
   id                    String         @id @default(cuid())
   programKey            String         @default("cohens")
@@ -720,6 +780,8 @@ model NekudotOrderAccrual {
   member                NekudotMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
   brokerId              String?
   broker                NekudotBroker? @relation(fields: [brokerId], references: [id], onDelete: SetNull)
+  cashbackTier          String         @default("BLUE")
+  cashbackBasisPoints   Int            @default(500)
   originalPurchaseCents Int
   purchaseCents         Int
   clientEarnedCents     Int

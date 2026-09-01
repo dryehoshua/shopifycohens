@@ -14,6 +14,7 @@ import {
 import {
   bindNekudotCredential,
   cancelNekudotReservation,
+  listShopifyCustomers,
   lookupNekudotMember,
   reconcileNekudotOrder,
   replaceNekudotCredential,
@@ -21,7 +22,7 @@ import {
   reserveNekudot,
   searchShopifyCustomers,
 } from "./nekudot.server";
-import { parseNekudotMoney } from "./nekudot-domain";
+import { cashbackBasisPointsForTier, parseNekudotMoney } from "./nekudot-domain";
 
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
@@ -348,13 +349,15 @@ async function resolveCafeCustomer(admin: GraphqlAdmin, customerId: unknown) {
 export async function searchCafeCustomers(request: Request, search: string) {
   const session = await currentCafeSession(request);
   const { admin } = await adminContext();
-  const customers = await searchShopifyCustomers(admin, search);
+  const hasSearch = Boolean(search.trim());
+  const customers = hasSearch
+    ? await searchShopifyCustomers(admin, search)
+    : await listShopifyCustomers(admin);
   const identities = customers.length
     ? await db.nekudotCustomerIdentity.findMany({
-        where: {
-          shop: session!.shop,
-          shopifyCustomerId: { in: customers.map((customer) => customer.id) },
-        },
+        where: hasSearch
+          ? { shop: session!.shop, shopifyCustomerId: { in: customers.map((customer) => customer.id) } }
+          : { shop: session!.shop },
         include: {
           member: {
             include: {
@@ -373,6 +376,8 @@ export async function searchCafeCustomers(request: Request, search: string) {
       member: member?.active
         ? {
             id: member.id,
+            cardTier: member.cardTier,
+            cashbackBasisPoints: cashbackBasisPointsForTier(member.cardTier),
             availableCents: member.balanceCents - member.reservedCents,
             balanceCents: member.balanceCents,
             reservedCents: member.reservedCents,
@@ -394,6 +399,7 @@ export async function assignCafeCustomerCredential(request: Request, input: {
   managerPin?: unknown;
   replace?: unknown;
   identityVerified?: unknown;
+  cardTier?: unknown;
 }) {
   const authorization = await requireCafeManager(request, input.managerPin);
   const { admin } = await adminContext();
@@ -407,6 +413,7 @@ export async function assignCafeCustomerCredential(request: Request, input: {
         kind: "RFID_OR_QR",
         label: input.label || "Tarjeta reemplazada en Café POS",
         identityVerified: input.identityVerified,
+        cardTier: input.cardTier,
       })
     : await bindNekudotCredential({
         admin,
@@ -415,11 +422,14 @@ export async function assignCafeCustomerCredential(request: Request, input: {
         rawToken: input.credential,
         kind: "RFID_OR_QR",
         label: input.label || "Tarjeta asignada en Café POS",
+        cardTier: input.cardTier,
       });
   return {
     id: member.id,
     displayName: member.displayName,
     email: member.email,
+    cardTier: member.cardTier,
+    cashbackBasisPoints: cashbackBasisPointsForTier(member.cardTier),
     availableCents: member.balanceCents - member.reservedCents,
     balanceCents: member.balanceCents,
     reservedCents: member.reservedCents,

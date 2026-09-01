@@ -25,6 +25,7 @@ export async function action({ request }: ActionFunctionArgs) {
       managerPin?: unknown;
       replace?: unknown;
       identityVerified?: unknown;
+      cardTier?: unknown;
     };
     const member = await assignCafeCustomerCredential(request, {
       ...body,

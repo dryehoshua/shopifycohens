@@ -1,17 +1,17 @@
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Form, useActionData, useLoaderData, useNavigation, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { formatNekudot } from "../nekudot-domain";
+import { cashbackPercentForTier, formatNekudot } from "../nekudot-domain";
 import {
   bindNekudotCredential,
   createNekudotBroker,
+  listShopifyCustomers,
   listNekudotBrokers,
   lookupNekudotMember,
   nekudotDashboard,
   NekudotError,
   replaceNekudotCredential,
-  searchShopifyCustomers,
 } from "../nekudot.server";
 import { authenticate } from "../shopify.server";
 import { NfcBridgeReader } from "../components/NfcBridgeReader";
@@ -29,15 +29,14 @@ type ActionData =
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  const search = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   const [dashboard, brokers, customers] = await Promise.all([
     nekudotDashboard(),
     listNekudotBrokers(),
-    search.length >= 2 ? searchShopifyCustomers(admin, search) : [],
+    listShopifyCustomers(admin),
   ]);
   return {
     shop: session.shop,
-    search,
+    search: "",
     customers,
     brokers: brokers.map((broker) => ({
       id: broker.id,
@@ -53,6 +52,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: member.id,
       displayName: member.displayName,
       email: member.email,
+      cardTier: member.cardTier,
       balanceCents: member.balanceCents,
       reservedCents: member.reservedCents,
       broker: member.broker ? { id: member.broker.id, displayName: member.broker.displayName, code: member.broker.code } : null,
@@ -94,6 +94,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         kind: field(formData, "kind"),
         label: field(formData, "label"),
         brokerId: field(formData, "brokerId"),
+        cardTier: field(formData, "cardTier"),
       });
       const member = await lookupNekudotMember(session.shop, rawToken);
       return Response.json({ ok: true, intent, message: `Tarjeta vinculada a ${member.displayName}.`, member } satisfies ActionData);
@@ -108,6 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         kind: field(formData, "kind"),
         label: field(formData, "label"),
         identityVerified: field(formData, "identityVerified"),
+        cardTier: field(formData, "cardTier"),
       });
       const member = await lookupNekudotMember(session.shop, rawToken);
       return Response.json({
@@ -124,7 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         email: field(formData, "email"),
         phone: field(formData, "phone"),
       });
-      return Response.json({ ok: true, intent, message: `Broker ${broker.displayName} listo con código ${broker.code}.` } satisfies ActionData);
+      return Response.json({ ok: true, intent, message: `IB ${broker.displayName} listo con código ${broker.code}.` } satisfies ActionData);
     }
     throw new NekudotError("Acción no válida.", 405);
   } catch (error) {
@@ -160,13 +162,19 @@ export default function NekudotPage() {
   const navigation = useNavigation();
   const scannerRef = useRef<HTMLInputElement>(null);
   const scannerFormRef = useRef<HTMLFormElement>(null);
-  const [tab, setTab] = useState<Tab>(data.search ? "customers" : "overview");
+  const [tab, setTab] = useState<Tab>("overview");
   const [selectedCustomerId, setSelectedCustomerId] = useState(data.customers[0]?.id ?? "");
+  const [customerFilter, setCustomerFilter] = useState("");
   const [scanCredential, setScanCredential] = useState("");
   const [bindCredential, setBindCredential] = useState("");
   const pendingIntent = String(navigation.formData?.get("intent") ?? "");
   const member = result?.ok ? result.member : undefined;
   const selectedCustomer = data.customers.find((customer) => customer.id === selectedCustomerId);
+  const normalizedCustomerFilter = customerFilter.trim().toLocaleLowerCase("es-MX");
+  const visibleCustomers = useMemo(() => data.customers.filter((customer) =>
+    !normalizedCustomerFilter || [customer.displayName, customer.email ?? "", customer.phone ?? ""]
+      .some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedCustomerFilter)),
+  ), [data.customers, normalizedCustomerFilter]);
 
   useEffect(() => {
     if (!result) return;
@@ -180,14 +188,14 @@ export default function NekudotPage() {
     { id: "overview", label: "Resumen", icon: "spark" },
     { id: "scan", label: "Escanear", icon: "scan" },
     { id: "customers", label: "Miembros", icon: "users" },
-    { id: "brokers", label: "Brokers", icon: "tag" },
+    { id: "brokers", label: "IBs", icon: "tag" },
     { id: "ledger", label: "Movimientos", icon: "book" },
   ];
 
   return <s-page heading="Nekudot Cohen's">
     <div className="cb-shell">
       <section className="cb-hero">
-        <div className="cb-hero-copy"><span className="cb-eyebrow"><span /> NEKUDOT COHEN&apos;S</span><h1>Premiamos volver.<br />Reconocemos recomendar.</h1><p>Una tarjeta para tienda y cafetería: 5% de cashback para el cliente y 5% de comisión para su broker.</p></div>
+        <div className="cb-hero-copy"><span className="cb-eyebrow"><span /> NEKUDOT COHEN&apos;S</span><h1>Premiamos volver.<br />Reconocemos recomendar.</h1><p>Silver 2%, Blue 5% y Golden 8% de cashback; el IB conserva 5% de comisión de las personas vinculadas.</p></div>
         <div className="cb-hero-balance"><span>Nekudot disponibles</span><strong>{formatNekudot(data.metrics.balanceCents)}</strong><div className="cb-mini-progress"><i /></div><small>{data.metrics.members} miembros · 1 Nekuda = $1 MXN</small></div>
       </section>
       <nav className="cb-tabs" aria-label="Secciones de Nekudot">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} type="button" onClick={() => setTab(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav>
@@ -197,11 +205,11 @@ export default function NekudotPage() {
         <section className="cb-metrics">
           <article className="cb-metric green"><span>Miembros</span><strong>{data.metrics.members}</strong><small>multitienda</small></article>
           <article className="cb-metric amber"><span>Saldo Nekudot</span><strong>{formatNekudot(data.metrics.balanceCents)}</strong><small>{formatNekudot(data.metrics.reservedCents)} reservado</small></article>
-          <article className="cb-metric purple"><span>Brokers</span><strong>{data.metrics.brokers}</strong><small>perfiles activos</small></article>
+          <article className="cb-metric purple"><span>IBs</span><strong>{data.metrics.brokers}</strong><small>perfiles activos</small></article>
           <article className="cb-metric blue"><span>Comisiones</span><strong>{formatNekudot(data.metrics.commissionBalanceCents)}</strong><small>saldo por conciliar</small></article>
         </section>
         <section className="cb-overview-grid">
-          <div className="cb-panel cb-how"><span className="cb-kicker">DINÁMICA DE CAJA</span><h2>Pregunta, identifica y acredita</h2><ol><li><span>1</span><div><strong>Pregunta</strong><p>Al terminar: “¿Tiene tarjeta Cohen&apos;s?”.</p></div></li><li><span>2</span><div><strong>Escanea</strong><p>RFID o QR localiza su perfil, no su saldo.</p></div></li><li><span>3</span><div><strong>Acredita</strong><p>El pedido pagado carga 5% al cliente y 5% al broker.</p></div></li></ol><button className="cb-primary" type="button" onClick={() => setTab("scan")}>Abrir lector</button></div>
+          <div className="cb-panel cb-how"><span className="cb-kicker">DINÁMICA DE CAJA</span><h2>Pregunta, identifica y acredita</h2><ol><li><span>1</span><div><strong>Pregunta</strong><p>Al terminar: “¿Tiene tarjeta Cohen&apos;s?”.</p></div></li><li><span>2</span><div><strong>Escanea</strong><p>RFID o QR localiza su perfil, nivel y saldo.</p></div></li><li><span>3</span><div><strong>Acredita</strong><p>El pedido pagado aplica 2%, 5% u 8% según la tarjeta.</p></div></li></ol><button className="cb-primary" type="button" onClick={() => setTab("scan")}>Abrir lector</button></div>
           <div className="cb-panel cb-status"><span className="cb-kicker">COBERTURA</span><h2>Tienda + cafetería</h2><div className="cb-status-line"><span className="ok">✓</span><div><strong>Wallet central</strong><small>Un saldo en las dos tiendas</small></div></div><div className="cb-status-line"><span className="ok">✓</span><div><strong>Compras y devoluciones</strong><small>Reconciliación automática</small></div></div><div className="cb-status-line"><span className="ok">✓</span><div><strong>Canje protegido</strong><small>Reserva hasta confirmar el pedido</small></div></div></div>
         </section>
         <Ledger entries={data.ledger.slice(0, 8)} />
@@ -209,15 +217,15 @@ export default function NekudotPage() {
 
       {tab === "scan" ? <section className="cb-panel cb-scan-layout">
         <div className="cb-scan-card"><div className="cb-section-heading"><span className="cb-icon"><Icon name="scan" /></span><div><h2>Leer tarjeta o QR</h2><p>El ID es el mismo en tienda y cafetería.</p></div></div><Form ref={scannerFormRef} method="post" className="cb-scan-form"><input type="hidden" name="intent" value="lookup" /><label htmlFor="nekudot-credential">ID Nekudot</label><div className="cb-input-action"><input id="nekudot-credential" ref={scannerRef} name="credential" value={scanCredential} onChange={(event) => setScanCredential(event.target.value)} required minLength={4} maxLength={128} autoComplete="off" placeholder="Esperando lectura…" /><button className="cb-primary" type="submit" disabled={pendingIntent === "lookup"}>{pendingIntent === "lookup" ? "Buscando…" : "Identificar"}</button></div></Form><NfcBridgeReader onCredential={(credential) => { setScanCredential(credential); window.requestAnimationFrame(() => scannerFormRef.current?.requestSubmit()); }} /><div className="cb-reader-visual" aria-hidden="true"><div className="cb-card-chip"><i /><i /><i /><i /></div><div className="cb-radio">)))</div><div className="cb-qr-grid">{Array.from({ length: 25 }).map((_, index) => <i key={index} />)}</div></div></div>
-        {member ? <div className="cb-account-card"><div className="cb-account-head"><span className="cb-avatar large">{member.displayName.slice(0, 2).toUpperCase()}</span><div><span className="cb-kicker">MIEMBRO ENCONTRADO</span><h2>{member.displayName}</h2><p>{member.email ?? "Sin correo"}</p></div><span className="cb-live">ACTIVA</span></div><div className="cb-balance-box"><span>Disponible para nuevas compras</span><strong>{formatNekudot(member.availableCents)}</strong><small>{formatNekudot(member.reservedCents)} reservado</small></div><div className="cb-account-stats"><span><small>Ganado</small><strong>{formatNekudot(member.lifetimeEarnedCents)}</strong></span><span><small>Canjeado</small><strong>{formatNekudot(member.lifetimeRedeemedCents)}</strong></span><span><small>Broker</small><strong>{member.broker?.displayName ?? "Sin broker"}</strong></span></div><div className="cb-order-note"><span>i</span><p>En Shopify POS usa el mosaico “Nekudot Cohen&apos;s” para asignar este cliente al carrito y aplicar su saldo.</p></div></div> : <div className="cb-empty-account"><span><Icon name="users" /></span><h3>Lista para leer</h3><p>La membresía mostrará saldo, broker e identidades de ambas tiendas.</p></div>}
+        {member ? <div className="cb-account-card"><div className="cb-account-head"><span className="cb-avatar large">{member.displayName.slice(0, 2).toUpperCase()}</span><div><span className="cb-kicker">MIEMBRO ENCONTRADO</span><h2>{member.displayName}</h2><p>{member.email ?? "Sin correo"} · {member.cardTier} · {cashbackPercentForTier(member.cardTier)}%</p></div><span className="cb-live">ACTIVA</span></div><div className="cb-balance-box"><span>Disponible para nuevas compras</span><strong>{formatNekudot(member.availableCents)}</strong><small>{formatNekudot(member.reservedCents)} reservado</small></div><div className="cb-account-stats"><span><small>Ganado</small><strong>{formatNekudot(member.lifetimeEarnedCents)}</strong></span><span><small>Canjeado</small><strong>{formatNekudot(member.lifetimeRedeemedCents)}</strong></span><span><small>IB</small><strong>{member.broker?.displayName ?? "Sin IB"}</strong></span></div><div className="cb-order-note"><span>i</span><p>En Shopify POS usa el mosaico “Nekudot Cohen&apos;s” para asignar este cliente al carrito y aplicar su saldo.</p></div></div> : <div className="cb-empty-account"><span><Icon name="users" /></span><h3>Lista para leer</h3><p>La membresía mostrará tipo de tarjeta, saldo, IB e identidades de ambas tiendas.</p></div>}
       </section> : null}
 
-      {tab === "customers" ? <section className="cb-panel"><div className="cb-panel-title"><div><span className="cb-kicker">MIEMBROS</span><h2>Vincular cliente de Shopify</h2><p>Si la tarjeta ya existe, añadiremos esta tienda al mismo wallet.</p></div><span className="cb-count">5% cashback</span></div><Form method="get" className="cb-search"><span>⌕</span><input name="q" defaultValue={data.search} minLength={2} placeholder="Buscar cliente por nombre o correo…" /><button type="submit">Buscar</button></Form>
-        {data.search ? <div className="cb-customer-workspace"><div className="cb-customer-results"><h3>Resultados</h3>{data.customers.map((customer) => <button key={customer.id} type="button" className={`cb-customer-result ${selectedCustomerId === customer.id ? "selected" : ""}`} onClick={() => setSelectedCustomerId(customer.id)}><span className="cb-avatar">{customer.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{customer.displayName}</strong><small>{customer.email ?? "Sin correo"} · {customer.numberOfOrders} pedidos</small></span><i>{selectedCustomerId === customer.id ? "✓" : "›"}</i></button>)}</div><div className="cb-bind-card"><span className="cb-kicker">TARJETA NEKUDOT</span><h3>{selectedCustomer?.displayName ?? "Selecciona un cliente"}</h3><p>Vincula una tarjeta nueva o reemplaza una perdida sin tocar el saldo.</p><Form method="post"><input type="hidden" name="customerId" value={selectedCustomer?.id ?? ""} /><label>ID leído<input name="credential" value={bindCredential} onChange={(event) => setBindCredential(event.target.value)} required minLength={4} maxLength={128} placeholder="Escanea aquí" /></label><NfcBridgeReader compact onCredential={setBindCredential} /><label>Tipo<select name="kind" defaultValue="RFID_OR_QR"><option value="RFID_OR_QR">RFID o QR</option><option value="RFID">RFID</option><option value="QR">QR</option></select></label><label>Broker<select name="brokerId" defaultValue=""><option value="">Sin broker</option>{data.brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.displayName} · {broker.code}</option>)}</select></label><label>Etiqueta<input name="label" maxLength={80} placeholder="Tarjeta principal" /></label><button name="intent" value="bind" className="cb-primary cb-full" type="submit" disabled={!selectedCustomer || Boolean(pendingIntent)}>{pendingIntent === "bind" ? "Vinculando…" : "Crear / vincular"}</button><div className="cb-replace"><label className="cb-check"><input type="checkbox" name="identityVerified" value="yes" /><span>Verifiqué personalmente la identificación del cliente.</span></label><button name="intent" value="replace_card" className="cb-danger cb-full" type="submit" disabled={!selectedCustomer || Boolean(pendingIntent)}>{pendingIntent === "replace_card" ? "Reemplazando…" : "Reemplazar tarjeta perdida"}</button><small>La tarjeta anterior quedará inutilizable; el perfil, broker y saldo no cambian.</small></div></Form></div></div> : <div className="cb-search-prompt"><Icon name="users" /><p>Busca el perfil que ya existe en Shopify.</p></div>}
-        <div className="cb-subheading"><h3>Miembros recientes</h3><span>{data.members.length}</span></div><div className="cb-member-grid">{data.members.map((item) => <article className="cb-member" key={item.id}><span className="cb-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><div><strong>{item.displayName}</strong><small>{item.broker ? `Broker: ${item.broker.displayName}` : "Sin broker"} · {item.shops.length} tienda(s)</small></div><div className="cb-member-balance"><strong>{formatNekudot(item.balanceCents - item.reservedCents)}</strong><small>{item.credentialCount} ID</small></div></article>)}</div>
+      {tab === "customers" ? <section className="cb-panel"><div className="cb-panel-title"><div><span className="cb-kicker">MIEMBROS</span><h2>Vincular cliente de Shopify</h2><p>La lista se carga automáticamente; escribe sólo para filtrarla.</p></div><span className="cb-count">Silver 2% · Blue 5% · Golden 8%</span></div><div className="cb-search"><span>⌕</span><input value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} placeholder="Filtrar por nombre, teléfono o correo…" /></div>
+        <div className="cb-customer-workspace"><div className="cb-customer-results"><h3>Clientes ({visibleCustomers.length})</h3>{visibleCustomers.map((customer) => <button key={customer.id} type="button" className={`cb-customer-result ${selectedCustomerId === customer.id ? "selected" : ""}`} onClick={() => setSelectedCustomerId(customer.id)}><span className="cb-avatar">{customer.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{customer.displayName}</strong><small>{customer.phone ?? customer.email ?? "Sin contacto"} · {customer.numberOfOrders} pedidos</small></span><i>{selectedCustomerId === customer.id ? "✓" : "›"}</i></button>)}</div><div className="cb-bind-card"><span className="cb-kicker">TARJETA NEKUDOT</span><h3>{selectedCustomer?.displayName ?? "Selecciona un cliente"}</h3><p>El tipo de tarjeta determina el cashback de las compras nuevas.</p><Form method="post"><input type="hidden" name="customerId" value={selectedCustomer?.id ?? ""} /><label>ID leído<input name="credential" value={bindCredential} onChange={(event) => setBindCredential(event.target.value)} required minLength={4} maxLength={128} placeholder="Escanea aquí" /></label><NfcBridgeReader compact onCredential={setBindCredential} /><label>Tipo de tarjeta<select name="cardTier" defaultValue="" required><option value="" disabled>Selecciona el tipo</option><option value="SILVER">Silver · 2%</option><option value="BLUE">Blue · 5%</option><option value="GOLDEN">Golden · 8%</option></select></label><label>Formato<select name="kind" defaultValue="RFID_OR_QR"><option value="RFID_OR_QR">RFID o QR</option><option value="RFID">RFID</option><option value="QR">QR</option></select></label><label>Broker<select name="brokerId" defaultValue=""><option value="">Sin broker</option>{data.brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.displayName} · {broker.code}</option>)}</select></label><label>Etiqueta<input name="label" maxLength={80} placeholder="Tarjeta principal" /></label><button name="intent" value="bind" className="cb-primary cb-full" type="submit" disabled={!selectedCustomer || Boolean(pendingIntent)}>{pendingIntent === "bind" ? "Vinculando…" : "Crear / vincular"}</button><div className="cb-replace"><label className="cb-check"><input type="checkbox" name="identityVerified" value="yes" /><span>Verifiqué personalmente la identificación del cliente.</span></label><button name="intent" value="replace_card" className="cb-danger cb-full" type="submit" disabled={!selectedCustomer || Boolean(pendingIntent)}>{pendingIntent === "replace_card" ? "Reemplazando…" : "Reemplazar tarjeta perdida"}</button><small>La tarjeta anterior quedará inutilizable; el saldo se conserva y el tipo seleccionado queda activo.</small></div></Form></div></div>
+        <div className="cb-subheading"><h3>Miembros recientes</h3><span>{data.members.length}</span></div><div className="cb-member-grid">{data.members.map((item) => <article className="cb-member" key={item.id}><span className="cb-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><div><strong>{item.displayName}</strong><small>{item.cardTier} · {cashbackPercentForTier(item.cardTier)}% · {item.broker ? `Broker: ${item.broker.displayName}` : "Sin broker"}</small></div><div className="cb-member-balance"><strong>{formatNekudot(item.balanceCents - item.reservedCents)}</strong><small>{item.credentialCount} ID</small></div></article>)}</div>
       </section> : null}
 
-      {tab === "brokers" ? <section className="cb-panel"><div className="cb-panel-title"><div><span className="cb-kicker">BROKERS</span><h2>Perfiles y comisión 5%</h2></div><span className="cb-count">{data.brokers.length} activos</span></div><div className="cb-customer-workspace"><div className="cb-bind-card"><span className="cb-kicker">NUEVO BROKER</span><h3>Crear perfil</h3><p>El código permite reconocerlo en reportes.</p><Form method="post"><input type="hidden" name="intent" value="create_broker" /><label>Nombre<input name="displayName" required minLength={2} /></label><label>Código<input name="code" required minLength={2} placeholder="EJ. DAVID-01" /></label><label>Correo<input name="email" type="email" /></label><label>Teléfono<input name="phone" /></label><button className="cb-primary cb-full" type="submit" disabled={pendingIntent === "create_broker"}>{pendingIntent === "create_broker" ? "Guardando…" : "Guardar broker"}</button></Form></div><div className="cb-customer-results"><h3>Comisiones por pagar</h3>{data.brokers.map((broker) => <div className="cb-customer-result" key={broker.id}><span className="cb-avatar">{broker.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{broker.displayName} · {broker.code}</strong><small>{broker.clientCount} clientes · histórico {formatNekudot(broker.lifetimeCommissionCents)}</small></span><i>{formatNekudot(broker.commissionBalanceCents)}</i></div>)}</div></div></section> : null}
+      {tab === "brokers" ? <section className="cb-panel"><div className="cb-panel-title"><div><span className="cb-kicker">IBS</span><h2>Perfiles IB y comisión 5%</h2></div><span className="cb-count">{data.brokers.length} activos</span></div><div className="cb-customer-workspace"><div className="cb-bind-card"><span className="cb-kicker">NUEVO IB</span><h3>Crear perfil</h3><p>Cada IB recibe un código único para vincular a las personas que introduce.</p><Form method="post"><input type="hidden" name="intent" value="create_broker" /><label>Nombre<input name="displayName" required minLength={2} /></label><label>Código único<input name="code" required minLength={2} placeholder="EJ. DAVID-01" /></label><label>Correo<input name="email" type="email" /></label><label>Teléfono para OTP<input name="phone" required inputMode="tel" /></label><button className="cb-primary cb-full" type="submit" disabled={pendingIntent === "create_broker"}>{pendingIntent === "create_broker" ? "Guardando…" : "Guardar IB"}</button></Form></div><div className="cb-customer-results"><h3>Comisiones por pagar</h3>{data.brokers.map((broker) => <div className="cb-customer-result" key={broker.id}><span className="cb-avatar">{broker.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{broker.displayName} · {broker.code}</strong><small>{broker.clientCount} personas · histórico {formatNekudot(broker.lifetimeCommissionCents)}</small></span><i>{formatNekudot(broker.commissionBalanceCents)}</i></div>)}</div></div></section> : null}
       {tab === "ledger" ? <Ledger entries={data.ledger} /> : null}
     </div>
   </s-page>;

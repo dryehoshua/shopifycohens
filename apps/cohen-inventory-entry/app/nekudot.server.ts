@@ -2,11 +2,13 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
 import {
+  cashbackBasisPointsForTier,
   calculateNekudotPurchase,
   calculateRestoredRedemptionCents,
   NEKUDOT_PROGRAM_KEY,
   nekudotCredentialLastFour,
   normalizeBrokerCode,
+  normalizeNekudotCardTier,
   normalizeNekudotCredential,
   parseNekudotMoney,
   safeNekudotOperationKey,
@@ -38,6 +40,11 @@ type ShopifyCustomerSummary = {
   amountSpent: { amount: string; currencyCode: string };
 };
 
+type ShopifyCustomerConnection = {
+  nodes: ShopifyCustomerSummary[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+};
+
 async function graphql<T>(admin: AdminApiContext, query: string, variables: Record<string, unknown> = {}) {
   const response = await admin.graphql(query, { variables });
   const payload = (await response.json()) as {
@@ -53,6 +60,18 @@ async function graphql<T>(admin: AdminApiContext, query: string, variables: Reco
   }
   if (!payload.data) throw new NekudotError("Shopify no devolvió datos.", 502, "SHOPIFY_EMPTY");
   return payload.data;
+}
+
+function customerSummary(customer: ShopifyCustomerSummary) {
+  return {
+    id: customer.id,
+    displayName: customer.displayName || "Cliente sin nombre",
+    email: customer.defaultEmailAddress?.emailAddress?.trim() || null,
+    phone: customer.defaultPhoneNumber?.phoneNumber?.trim() || null,
+    numberOfOrders: Number(customer.numberOfOrders) || 0,
+    amountSpent: customer.amountSpent.amount,
+    currencyCode: customer.amountSpent.currencyCode,
+  };
 }
 
 export async function searchShopifyCustomers(admin: AdminApiContext, search: string) {
@@ -71,15 +90,33 @@ export async function searchShopifyCustomers(admin: AdminApiContext, search: str
       }
     }
   `, { query });
-  return data.customers.nodes.map((customer) => ({
-    id: customer.id,
-    displayName: customer.displayName || "Cliente sin nombre",
-    email: customer.defaultEmailAddress?.emailAddress?.trim() || null,
-    phone: customer.defaultPhoneNumber?.phoneNumber?.trim() || null,
-    numberOfOrders: Number(customer.numberOfOrders) || 0,
-    amountSpent: customer.amountSpent.amount,
-    currencyCode: customer.amountSpent.currencyCode,
-  }));
+  return data.customers.nodes.map(customerSummary);
+}
+
+export async function listShopifyCustomers(admin: AdminApiContext) {
+  const customers: ShopifyCustomerSummary[] = [];
+  let after: string | null = null;
+  do {
+    const data: { customers: ShopifyCustomerConnection } = await graphql(admin, `#graphql
+      query NekudotCustomerList($after: String) {
+        customers(first: 250, after: $after, sortKey: UPDATED_AT, reverse: true) {
+          nodes {
+            id displayName
+            defaultEmailAddress { emailAddress }
+            defaultPhoneNumber { phoneNumber }
+            numberOfOrders
+            amountSpent { amount currencyCode }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    `, { after });
+    customers.push(...data.customers.nodes);
+    after = data.customers.pageInfo.hasNextPage
+      ? data.customers.pageInfo.endCursor
+      : null;
+  } while (after);
+  return customers.map(customerSummary);
 }
 
 function secret() {
@@ -121,6 +158,9 @@ export async function createNekudotBroker(input: {
   const code = normalizeBrokerCode(input.code);
   const displayName = String(input.displayName ?? "").trim().replace(/\s+/g, " ").slice(0, 100);
   if (displayName.length < 2) throw new NekudotError("Escribe el nombre del broker.");
+  const phoneDigits = String(input.phone ?? "").replace(/\D/g, "");
+  const phone = phoneDigits ? (phoneDigits.length === 10 ? `+52${phoneDigits}` : `+${phoneDigits}`) : null;
+  if (phone && !/^\+[1-9]\d{9,14}$/.test(phone)) throw new NekudotError("Escribe un teléfono válido para el IB.");
   return db.nekudotBroker.upsert({
     where: { programKey_code: { programKey: NEKUDOT_PROGRAM_KEY, code } },
     create: {
@@ -128,12 +168,12 @@ export async function createNekudotBroker(input: {
       code,
       displayName,
       email: String(input.email ?? "").trim().slice(0, 150) || null,
-      phone: String(input.phone ?? "").trim().slice(0, 40) || null,
+      phone,
     },
     update: {
       displayName,
       email: String(input.email ?? "").trim().slice(0, 150) || null,
-      phone: String(input.phone ?? "").trim().slice(0, 40) || null,
+      phone,
       active: true,
     },
   });
@@ -155,11 +195,13 @@ export async function bindNekudotCredential(input: {
   kind?: unknown;
   label?: unknown;
   brokerId?: unknown;
+  cardTier?: unknown;
 }) {
   const customer = await resolveCustomer(input.admin, input.customerId);
   const digest = tokenHash(input.rawToken);
   const lastFour = nekudotCredentialLastFour(input.rawToken);
   const kind = String(input.kind ?? "RFID_OR_QR");
+  const cardTier = normalizeNekudotCardTier(input.cardTier);
   if (!new Set(["RFID", "QR", "RFID_OR_QR"]).has(kind)) throw new NekudotError("Tipo de credencial no válido.");
   const brokerId = String(input.brokerId ?? "").trim() || null;
   if (brokerId) {
@@ -187,6 +229,7 @@ export async function bindNekudotCredential(input: {
           displayName: customer.displayName || "Cliente sin nombre",
           email: customer.defaultEmailAddress?.emailAddress ?? null,
           brokerId,
+          cardTier,
         },
       });
       memberId = member.id;
@@ -203,6 +246,7 @@ export async function bindNekudotCredential(input: {
         displayName: customer.displayName || "Cliente sin nombre",
         email: customer.defaultEmailAddress?.emailAddress ?? null,
         active: true,
+        cardTier,
         ...(brokerId ? { brokerId } : {}),
       },
     });
@@ -259,6 +303,7 @@ export async function replaceNekudotCredential(input: {
   kind?: unknown;
   label?: unknown;
   identityVerified?: unknown;
+  cardTier?: unknown;
 }) {
   if (String(input.identityVerified ?? "") !== "yes") {
     throw new NekudotError(
@@ -271,6 +316,7 @@ export async function replaceNekudotCredential(input: {
   const digest = tokenHash(input.rawToken);
   const lastFour = nekudotCredentialLastFour(input.rawToken);
   const kind = String(input.kind ?? "RFID_OR_QR");
+  const cardTier = normalizeNekudotCardTier(input.cardTier);
   if (!new Set(["RFID", "QR", "RFID_OR_QR"]).has(kind)) {
     throw new NekudotError("Tipo de credencial no válido.");
   }
@@ -343,6 +389,10 @@ export async function replaceNekudotCredential(input: {
         revokedByShop: null,
       },
     });
+    await transaction.nekudotMember.update({
+      where: { id: identity.memberId },
+      data: { cardTier },
+    });
     await transaction.nekudotLedgerEntry.create({
       data: {
         programKey: NEKUDOT_PROGRAM_KEY,
@@ -361,6 +411,7 @@ export async function replaceNekudotCredential(input: {
           identityVerified: true,
           revokedCredentials: activeCredentials,
           replacementLastFour: replacement.lastFour,
+          cardTier,
         },
       },
     });
@@ -561,12 +612,21 @@ export async function reconcileNekudotOrder(input: OrderInput) {
     existingAccrual?.originalPurchaseCents ?? 0,
     purchaseCents,
   );
-  const target = calculateNekudotPurchase(purchaseCents, Boolean(brokerId));
+  const keepsOriginalRate = Boolean(existingAccrual && existingAccrual.memberId === newOrderMember?.id);
+  const cashbackTier = keepsOriginalRate
+    ? normalizeNekudotCardTier(existingAccrual!.cashbackTier)
+    : normalizeNekudotCardTier(newOrderMember?.cardTier ?? "SILVER");
+  const cashbackBasisPoints = keepsOriginalRate
+    ? existingAccrual!.cashbackBasisPoints
+    : cashbackBasisPointsForTier(cashbackTier);
+  const target = calculateNekudotPurchase(purchaseCents, Boolean(brokerId), cashbackBasisPoints);
   const hash = createHash("sha256").update(JSON.stringify({
     order: input.shopifyOrderId,
     updated: input.orderUpdatedAt.toISOString(),
     memberId: newOrderMember?.id ?? null,
     brokerId,
+    cashbackTier,
+    cashbackBasisPoints,
     target,
     originalPurchaseCents,
     cancelled: input.cancelled,
@@ -683,17 +743,17 @@ export async function reconcileNekudotOrder(input: OrderInput) {
       await postMember(accrual.memberId, -accrual.clientEarnedCents, "old-member", `Reversión de ${input.orderName}`);
       if (accrual.brokerId) await postBroker(accrual.brokerId, -accrual.brokerEarnedCents, "old-broker", `Reversión de comisión de ${input.orderName}`);
       accrual = await transaction.nekudotOrderAccrual.update({ where: { id: accrual.id }, data: {
-        ...(newOrderMember ? { memberId: newOrderMember.id, brokerId } : {}), originalPurchaseCents, purchaseCents: 0,
+        ...(newOrderMember ? { memberId: newOrderMember.id, brokerId, cashbackTier, cashbackBasisPoints } : {}), originalPurchaseCents, purchaseCents: 0,
         clientEarnedCents: 0, brokerEarnedCents: 0, calculationHash: hash, processedAt: new Date(),
       } });
     }
     if (!newOrderMember) return accrual;
-    await postMember(newOrderMember.id, target.clientEarnedCents - (accrual?.clientEarnedCents ?? 0), "current-member", target.clientEarnedCents >= (accrual?.clientEarnedCents ?? 0) ? `5% Nekudot de ${input.orderName}` : `Ajuste por devolución de ${input.orderName}`);
+    await postMember(newOrderMember.id, target.clientEarnedCents - (accrual?.clientEarnedCents ?? 0), "current-member", target.clientEarnedCents >= (accrual?.clientEarnedCents ?? 0) ? `${cashbackBasisPoints / 100}% Nekudot ${cashbackTier} de ${input.orderName}` : `Ajuste por devolución de ${input.orderName}`);
     if (brokerId) await postBroker(brokerId, target.brokerEarnedCents - (accrual?.brokerEarnedCents ?? 0), "current-broker", target.brokerEarnedCents >= (accrual?.brokerEarnedCents ?? 0) ? `Comisión 5% de ${input.orderName}` : `Ajuste de comisión por devolución de ${input.orderName}`);
     return transaction.nekudotOrderAccrual.upsert({
       where: { shop_shopifyOrderId: { shop: input.shop, shopifyOrderId: input.shopifyOrderId } },
-      create: { programKey: NEKUDOT_PROGRAM_KEY, shop: input.shop, shopifyOrderId: input.shopifyOrderId, orderName: input.orderName, memberId: newOrderMember.id, brokerId, originalPurchaseCents, purchaseCents: target.purchaseCents, clientEarnedCents: target.clientEarnedCents, brokerEarnedCents: target.brokerEarnedCents, currencyCode: input.currencyCode, calculationHash: hash },
-      update: { orderName: input.orderName, memberId: newOrderMember.id, brokerId, originalPurchaseCents, purchaseCents: target.purchaseCents, clientEarnedCents: target.clientEarnedCents, brokerEarnedCents: target.brokerEarnedCents, currencyCode: input.currencyCode, calculationHash: hash, processedAt: new Date() },
+      create: { programKey: NEKUDOT_PROGRAM_KEY, shop: input.shop, shopifyOrderId: input.shopifyOrderId, orderName: input.orderName, memberId: newOrderMember.id, brokerId, cashbackTier, cashbackBasisPoints, originalPurchaseCents, purchaseCents: target.purchaseCents, clientEarnedCents: target.clientEarnedCents, brokerEarnedCents: target.brokerEarnedCents, currencyCode: input.currencyCode, calculationHash: hash },
+      update: { orderName: input.orderName, memberId: newOrderMember.id, brokerId, cashbackTier, cashbackBasisPoints, originalPurchaseCents, purchaseCents: target.purchaseCents, clientEarnedCents: target.clientEarnedCents, brokerEarnedCents: target.brokerEarnedCents, currencyCode: input.currencyCode, calculationHash: hash, processedAt: new Date() },
     });
   });
 }

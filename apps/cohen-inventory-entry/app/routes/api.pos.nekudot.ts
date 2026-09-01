@@ -9,12 +9,15 @@ import {
 } from "../nekudot.server";
 import { syncSalesOrderFromAdmin } from "../sales-sync.server";
 import { authenticate, unauthenticated } from "../shopify.server";
+import { cashbackBasisPointsForTier } from "../nekudot-domain";
 
 function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) {
   return {
     id: member.id,
     displayName: member.displayName,
     email: member.email,
+    cardTier: member.cardTier,
+    cashbackBasisPoints: cashbackBasisPointsForTier(member.cardTier),
     balanceCents: member.balanceCents,
     reservedCents: member.reservedCents,
     availableCents: member.availableCents,

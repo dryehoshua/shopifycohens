@@ -12,6 +12,10 @@ function money(cents) {
   return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(cents / 100);
 }
 
+function cardTierLabel(cardTier) {
+  return cardTier === "SILVER" ? "Plata" : cardTier === "BLUE" ? "Blue" : cardTier === "GOLDEN" ? "Golden" : "Vales";
+}
+
 function cartSubtotalCents() {
   const raw = String(shopify.cart.current.value.subtotal ?? "0").replace(/[^0-9.-]/g, "");
   return Math.max(0, Math.round(Number(raw || 0) * 100));
@@ -99,10 +103,10 @@ function NekudotModal() {
   }
 
   return <s-page heading="Nekudot Cohen's"><s-scroll-box><s-box padding="base"><s-stack direction="block" gap="base">
-    <s-banner tone="info" heading="5% para el cliente · 5% para su broker">La misma tarjeta funciona en tienda y cafetería. El saldo se confirma al completar la compra.</s-banner>
+    <s-banner tone="info" heading="Silver 2% · Blue 5% · Golden 8%">La misma tarjeta funciona en tienda y cafetería. El broker conserva una comisión de 5% y el saldo se confirma al completar la compra.</s-banner>
     {message ? <s-banner tone="critical" heading="No se pudo continuar">{message}</s-banner> : null}
     {!member ? <s-section heading="Identificar miembro"><s-stack direction="block" gap="base"><s-text-field label="ID RFID o QR" value={credential} onInput={(event) => setCredential(event.currentTarget.value)} placeholder="Escanea o escribe" /><s-stack direction="inline" gap="base"><s-button variant="primary" disabled={busy} onClick={() => lookup(credential)}>{busy ? "Buscando…" : "Buscar"}</s-button><s-button variant="secondary" onClick={() => shopify.scanner.showCameraScanner()}>Usar cámara</s-button></s-stack></s-stack></s-section> : <>
-      <s-section heading={member.displayName}><s-stack direction="block" gap="base"><s-banner tone="success" heading={`Disponible: ${money(member.availableCents)}`}>{member.broker ? `Broker: ${member.broker.displayName}` : "Sin broker asignado"}</s-banner><s-text-field label="Nekudot a usar (MXN)" value={amount} inputMode="decimal" onInput={(event) => setAmount(event.currentTarget.value)} placeholder="0.00" /><s-button variant="primary" disabled={busy || member.availableCents <= 0 || cartSubtotalCents() <= 0} onClick={redeem}>{busy ? "Aplicando…" : "Aplicar al carrito"}</s-button><s-button variant="secondary" onClick={() => { setMember(null); setCredential(""); setAmount(""); }}>Leer otra tarjeta</s-button></s-stack></s-section>
+      <s-section heading={member.displayName}><s-stack direction="block" gap="base"><s-banner tone="success" heading={`${cardTierLabel(member.cardTier)} · ${member.cashbackBasisPoints / 100}% · Disponible: ${money(member.availableCents)}`}>{member.broker ? `Broker: ${member.broker.displayName}` : "Sin broker asignado"}</s-banner><s-text-field label="Nekudot a usar (MXN)" value={amount} inputMode="decimal" onInput={(event) => setAmount(event.currentTarget.value)} placeholder="0.00" /><s-button variant="primary" disabled={busy || member.availableCents <= 0 || cartSubtotalCents() <= 0} onClick={redeem}>{busy ? "Aplicando…" : "Aplicar al carrito"}</s-button><s-button variant="secondary" onClick={() => { setMember(null); setCredential(""); setAmount(""); }}>Leer otra tarjeta</s-button></s-stack></s-section>
     </>}
   </s-stack></s-box></s-scroll-box></s-page>;
 }

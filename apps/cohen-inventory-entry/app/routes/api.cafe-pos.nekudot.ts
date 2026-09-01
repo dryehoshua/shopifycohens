@@ -5,12 +5,15 @@ import {
   currentCafeSession,
 } from "../cafe-pos.server";
 import { lookupNekudotMember } from "../nekudot.server";
+import { cashbackBasisPointsForTier } from "../nekudot-domain";
 
 function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) {
   return {
         id: member.id,
         displayName: member.displayName,
         email: member.email,
+        cardTier: member.cardTier,
+        cashbackBasisPoints: cashbackBasisPointsForTier(member.cardTier),
         balanceCents: member.balanceCents,
         reservedCents: member.reservedCents,
         availableCents: member.availableCents,

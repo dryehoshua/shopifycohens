@@ -19,6 +19,7 @@ export async function action({ request }: ActionFunctionArgs) {
       managerPin?: unknown;
       replace?: unknown;
       identityVerified?: unknown;
+      cardTier?: unknown;
     };
     const member = await assignRetailCustomerCredential(request, {
       ...body,

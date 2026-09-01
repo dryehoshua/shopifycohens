@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { assertRetailSameOrigin, currentRetailSession, retailPosJsonError } from "../retail-pos.server";
 import { lookupNekudotMember, NekudotError } from "../nekudot.server";
+import { cashbackBasisPointsForTier } from "../nekudot-domain";
 
 function nekudotJsonError(error: unknown) {
   if (error instanceof NekudotError) {
@@ -17,6 +18,8 @@ function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) 
         id: member.id,
         displayName: member.displayName,
         email: member.email,
+        cardTier: member.cardTier,
+        cashbackBasisPoints: cashbackBasisPointsForTier(member.cardTier),
         balanceCents: member.balanceCents,
         reservedCents: member.reservedCents,
         availableCents: member.availableCents,

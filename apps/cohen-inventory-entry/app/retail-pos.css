@@ -229,7 +229,7 @@ button { touch-action: manipulation; }
 .retail-membership-status.active { color: #195c3d; background: #e0f2e8; }
 .retail-card-assignment { display: grid; gap: 9px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #dce2de; }
 .retail-card-assignment > label { display: grid; gap: 5px; color: #566a61; font-size: 11px; font-weight: 800; }
-.retail-card-assignment > label input { width: 100%; border: 1px solid #cbd4cf; border-radius: 9px; padding: 10px; background: white; }
+.retail-card-assignment > label input, .retail-card-assignment > label select { width: 100%; border: 1px solid #cbd4cf; border-radius: 9px; padding: 10px; background: white; }
 .retail-card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .retail-card-actions button { border: 0; border-radius: 9px; padding: 10px; color: #285444; background: #e6eeea; font-size: 11px; font-weight: 900; cursor: pointer; }
 .retail-card-actions button.primary { color: white; background: #237153; }
@@ -245,7 +245,7 @@ button { touch-action: manipulation; }
 .retail-sale-actions button, .retail-staff-list button, .retail-suspended-list button { border: 0; border-radius: 8px; padding: 8px 10px; color: #245343; background: #e5ede9; font-weight: 800; cursor: pointer; }
 .retail-sale-actions button.danger, .retail-suspended-list button.danger { color: #8c312a; background: #f7e5e2; }
 .retail-field { display: grid; gap: 6px; margin: 12px 0; color: #53675f; font-weight: 700; }
-.retail-field input, .retail-field textarea { width: 100%; border: 1px solid #cbd4cf; border-radius: 10px; padding: 12px; background: white; }
+.retail-field input, .retail-field select, .retail-field textarea { width: 100%; border: 1px solid #cbd4cf; border-radius: 10px; padding: 12px; background: white; }
 .retail-staff-list { margin-top: 18px; }
 .retail-staff-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid #e7eae8; }
 .retail-staff-list small { display: block; color: #758079; }

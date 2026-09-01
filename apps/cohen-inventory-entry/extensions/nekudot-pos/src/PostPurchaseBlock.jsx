@@ -9,7 +9,7 @@ function PostPurchaseBlock() {
       <s-stack direction="block" gap="small">
         <s-text>¿El cliente tiene tarjeta Cohen&apos;s?</s-text>
         <s-button variant="primary" onClick={() => shopify.action.presentModal()}>
-          Sí, escanear y acreditar 5%
+          Sí, escanear y acreditar según tarjeta
         </s-button>
         <s-text color="subdued">Si no tiene tarjeta, termina la venta normalmente.</s-text>
       </s-stack>

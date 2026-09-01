@@ -49,9 +49,33 @@ Los valores se cargarán directamente en Railway; no se copiarán al repositorio
 - `COHENS_SOURCE_SHOP_NAME`
 - `SHOPIFY_ADMIN_APP_URL`
 - `NEKUDOT_TOKEN_SECRET`
+- `NEKUDOT_REGISTRATION_SHOP`
+- `NEKUDOT_UPLOAD_DIR=/data/nekudot-photos`
+- `TWILIO_API_KEY_SID`
+- `TWILIO_API_KEY_SECRET`
+- `TWILIO_VERIFY_SERVICE_SID`
+- `MERCADOPAGO_ACCESS_TOKEN`
+- `MERCADOPAGO_WEBHOOK_SECRET`
 - `NODE_ENV=production`
 
 Railway proporciona `PORT` automáticamente.
+
+## Registro público Nekudot
+
+Con el dominio productivo documentado, los cuatro enlaces son:
+
+- `https://cohens-operations-production.up.railway.app/registro/plata`
+- `https://cohens-operations-production.up.railway.app/registro/blue`
+- `https://cohens-operations-production.up.railway.app/registro/golden`
+- `https://cohens-operations-production.up.railway.app/registro/vales`
+
+El acceso del tarjetahabiente es `https://cohens-operations-production.up.railway.app/nekudot`.
+El portal separado para IBs es `https://cohens-operations-production.up.railway.app/mi-ib`.
+Shopify debe enlazar estas rutas desde páginas o botones del tema. El formulario
+crea o vincula el cliente, asigna la etiqueta del tipo de tarjeta, genera QR y
+código de barras Code 128, y crea el perfil Nekudot. Golden usa una suscripción
+mensual fija de $300 MXN y se mantiene mediante webhooks firmados de Mercado
+Pago. Blue exige el código único de un IB; Vales no genera comisión IB.
 
 ## Migración y cambio de servicio
 

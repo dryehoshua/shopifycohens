@@ -1,6 +1,31 @@
 export const NEKUDOT_PROGRAM_KEY = "cohens";
-export const CLIENT_CASHBACK_BASIS_POINTS = 500;
+export const SILVER_CASHBACK_BASIS_POINTS = 200;
+export const BLUE_CASHBACK_BASIS_POINTS = 500;
+export const GOLDEN_CASHBACK_BASIS_POINTS = 800;
 export const BROKER_COMMISSION_BASIS_POINTS = 500;
+
+export const NEKUDOT_CARD_TIERS = ["SILVER", "BLUE", "GOLDEN", "VOUCHER"] as const;
+export type NekudotCardTier = typeof NEKUDOT_CARD_TIERS[number];
+
+export function normalizeNekudotCardTier(value: unknown): NekudotCardTier {
+  const tier = String(value ?? "").trim().toUpperCase();
+  if (!NEKUDOT_CARD_TIERS.includes(tier as NekudotCardTier)) {
+    throw new Error("Selecciona el tipo de tarjeta: Plata, Blue, Golden o Vales.");
+  }
+  return tier as NekudotCardTier;
+}
+
+export function cashbackBasisPointsForTier(value: unknown) {
+  const tier = normalizeNekudotCardTier(value);
+  if (tier === "SILVER") return SILVER_CASHBACK_BASIS_POINTS;
+  if (tier === "BLUE") return BLUE_CASHBACK_BASIS_POINTS;
+  if (tier === "GOLDEN") return GOLDEN_CASHBACK_BASIS_POINTS;
+  return 0;
+}
+
+export function cashbackPercentForTier(value: unknown) {
+  return cashbackBasisPointsForTier(value) / 100;
+}
 
 export function normalizeNekudotCredential(value: unknown) {
   const token = String(value ?? "").normalize("NFKC").trim();
@@ -36,7 +61,7 @@ export function safeNekudotOperationKey(value: unknown) {
 
 export function calculateRateCents(
   purchaseCents: number,
-  rateBasisPoints = CLIENT_CASHBACK_BASIS_POINTS,
+  rateBasisPoints = SILVER_CASHBACK_BASIS_POINTS,
 ) {
   if (!Number.isInteger(purchaseCents) || purchaseCents < 0) {
     throw new Error("El importe de compra no es válido.");
@@ -47,10 +72,14 @@ export function calculateRateCents(
   return Math.floor((purchaseCents * rateBasisPoints) / 10_000);
 }
 
-export function calculateNekudotPurchase(purchaseCents: number, hasBroker: boolean) {
+export function calculateNekudotPurchase(
+  purchaseCents: number,
+  hasBroker: boolean,
+  clientCashbackBasisPoints = SILVER_CASHBACK_BASIS_POINTS,
+) {
   return {
     purchaseCents,
-    clientEarnedCents: calculateRateCents(purchaseCents, CLIENT_CASHBACK_BASIS_POINTS),
+    clientEarnedCents: calculateRateCents(purchaseCents, clientCashbackBasisPoints),
     brokerEarnedCents: hasBroker
       ? calculateRateCents(purchaseCents, BROKER_COMMISSION_BASIS_POINTS)
       : 0,

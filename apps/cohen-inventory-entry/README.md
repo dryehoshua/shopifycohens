@@ -4,8 +4,9 @@ Aplicación Shopify modular con tres apartados activos. **Inventario y entradas*
 registra mercancía desde PC o Shopify POS mediante código de barras.
 **Analíticos de utilidad** sincroniza ventas y calcula utilidad bruta estimada
 con el “Costo por artículo” vigente. **Nekudot Cohen's** comparte una wallet
-entre tienda y cafetería: acredita 5% al cliente, separa 5% para su broker y
-permite canjear el saldo en compras posteriores mediante RFID o QR.
+entre tienda y cafetería: acredita 2% con Silver, 5% con Blue u 8% con Golden,
+separa 5% para el IB que introdujo a la persona y permite canjear el saldo en
+compras posteriores mediante código de barras, QR o NFC.
 
 ## Nekudot Cohen's
 
@@ -13,15 +14,38 @@ La ruta embebida `/app/cashback` administra miembros, tarjetas/QR, brokers,
 saldos y el libro mayor. La extensión `Nekudot Cohen's` funciona dentro de
 Shopify POS; la POS web de la cafetería ofrece el mismo lector y canje.
 
+Los beneficiarios y tarjetahabientes son perfiles distintos de los IBs. Los
+cuatro enlaces públicos de registro son:
+
+- `/registro/plata`: registro gratuito; un cliente que ya existe en Shopify
+  también puede entrar por OTP y obtiene automáticamente su tarjeta Plata;
+- `/registro/blue`: exige el código único de un IB y vincula al nuevo miembro
+  con ese IB;
+- `/registro/golden`: crea una suscripción de Mercado Pago por $300 MXN al mes
+  y activa el beneficio de 8% cuando la suscripción queda autorizada;
+- `/registro/vales`: crea una cuenta comunitaria sin cashback automático ni
+  comisión IB; su saldo procede de fondeo de patrocinadores.
+
+`/nekudot` es el acceso por OTP SMS para beneficiarios y tarjetahabientes.
+Muestra su foto opcional, nombre, comunidad, saldo, compras, QR y código de
+barras Code 128. `/mi-ib` es el acceso separado por OTP para IBs y muestra su
+código, las personas vinculadas y sus comisiones disponible, histórica y
+pagada. El teléfono del IB se captura al crear su perfil en la administración.
+
+Mercado Pago debe enviar a `/webhooks/mercadopago` los eventos
+`subscription_preapproval` y `payment`. Twilio usa Verify v2 con
+`TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET` y `TWILIO_VERIFY_SERVICE_SID`;
+`TWILIO_ACCOUNT_SID` y `TWILIO_AUTH_TOKEN` se conservan sólo como alternativa.
+
 ### Dinámica de venta
 
 1. El personal termina de capturar y cobrar la compra.
 2. Shopify POS muestra **“¿El cliente tiene tarjeta Cohen's?”** en la pantalla
    posterior a la compra. En la cafetería, la pregunta aparece antes de cobrar.
-3. Si responde que sí, se escanea el RFID o QR. La tarjeta solo entrega la
+3. Si responde que sí, se escanea el código de barras, QR o NFC. La tarjeta solo entrega la
    llave del perfil; nunca contiene saldo.
 4. El backend verifica que el pedido esté pagado, asocia el cliente de Shopify
-   y acredita 5% al cliente y 5% a su broker.
+   y acredita la tasa de su tarjeta al cliente y 5% a su IB, cuando existe.
 5. El pedido y los webhooks de Shopify son la fuente de verdad. Repetir el
    escaneo o recibir de nuevo un webhook no duplica puntos.
 
@@ -31,7 +55,8 @@ tarjeta nueva y usa **Reemplazar tarjeta perdida**. Todas las credenciales
 anteriores quedan revocadas, la operación se audita y el saldo permanece en el
 mismo perfil.
 
-El pedido pagado es la fuente de verdad. Cada compra acredita 5% sobre su venta
+El pedido pagado es la fuente de verdad. Cada compra acredita la tasa de la
+tarjeta (Silver 2%, Blue 5% o Golden 8%) sobre su venta
 neta; una devolución revierte proporcionalmente cashback, comisión y Nekudot
 canjeados. El ID original nunca se guarda: se persiste únicamente su HMAC. Para
 compartir saldo entre dos tiendas Shopify, ambas instalaciones deben apuntar al

@@ -98,7 +98,7 @@ button { touch-action: manipulation; }
 .login-card h1 { margin: 0 0 6px; }
 .login-card p { color: #6f5b4e; }
 .field { display: grid; gap: 6px; margin: 12px 0; }
-.field input, .field textarea { width: 100%; border: 1px solid #cdbdab; border-radius: 10px; padding: 12px; background: white; }
+.field input, .field select, .field textarea { width: 100%; border: 1px solid #cdbdab; border-radius: 10px; padding: 12px; background: white; }
 .pin-input { font-size: 28px; letter-spacing: .35em; text-align: center; }
 
 .drawer { position: fixed; inset: 61px 0 0 auto; z-index: 30; width: min(520px, 100%); background: white; box-shadow: -8px 0 30px rgb(0 0 0 / 18%); padding: 20px; overflow: auto; }
