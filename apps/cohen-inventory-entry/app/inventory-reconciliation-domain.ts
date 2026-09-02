@@ -1,5 +1,19 @@
 export const AUDIT_MATCH_WINDOW_MS = 10 * 60 * 1000;
 
+export function toShopifyGid(resource: string, id: string) {
+  const value = id.trim();
+  return /^\d+$/.test(value) ? `gid://shopify/${resource}/${value}` : value;
+}
+
+export function sameShopifyId(left: string | null | undefined, right: string | null | undefined) {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const numericId = (value: string) =>
+    /^\d+$/.test(value) ? value : value.match(/^gid:\/\/shopify\/[^/]+\/(\d+)$/)?.[1] ?? null;
+  const leftNumeric = numericId(left);
+  return leftNumeric !== null && leftNumeric === numericId(right);
+}
+
 export type MovementEvidenceInput = {
   id: string;
   inventoryItemId: string;
@@ -52,8 +66,8 @@ export function classifyMovementEvidence(
   const change = group.changes.find(
     (item) =>
       item.name === "available" &&
-      item.item?.id === movement.inventoryItemId &&
-      item.location?.id === movement.locationId &&
+      sameShopifyId(item.item?.id, movement.inventoryItemId) &&
+      sameShopifyId(item.location?.id, movement.locationId) &&
       item.delta === movement.quantityDelta,
   );
   if (!change) {
@@ -100,8 +114,8 @@ export function matchAuditEventToMovement(
   return (
     movements.find((movement) => {
       if (
-        movement.inventoryItemId !== event.inventoryItemId ||
-        movement.locationId !== event.locationId
+        !sameShopifyId(movement.inventoryItemId, event.inventoryItemId) ||
+        !sameShopifyId(movement.locationId, event.locationId)
       ) {
         return false;
       }

@@ -6,6 +6,8 @@ import {
   classifyMovementEvidence,
   matchAuditEventToMovement,
   reconciliationFingerprint,
+  sameShopifyId,
+  toShopifyGid,
   type AdjustmentGroupEvidence,
 } from "./inventory-reconciliation-domain";
 
@@ -47,7 +49,9 @@ async function graphqlNodes(
   // Cada InventoryItem puede solicitar hasta 100 InventoryLevels. Cinco artículos
   // mantienen el costo solicitado por debajo del máximo de 1,000 puntos de Shopify.
   const chunkSize = kind === "items" ? 5 : 75;
-  for (const idChunk of chunks(Array.from(new Set(ids)), chunkSize)) {
+  const resource = kind === "items" ? "InventoryItem" : "InventoryAdjustmentGroup";
+  const normalizedIds = ids.map((id) => toShopifyGid(resource, id));
+  for (const idChunk of chunks(Array.from(new Set(normalizedIds)), chunkSize)) {
     if (!idChunk.length) continue;
     const query =
       kind === "adjustments"
@@ -124,9 +128,16 @@ function isCatalogEvidence(node: EvidenceNode): node is CatalogEvidence {
   return Boolean(node && "inventoryLevels" in node && "variant" in node);
 }
 
+function evidenceAliases(id: string) {
+  const numeric = id.match(/^gid:\/\/shopify\/[^/]+\/(\d+)$/)?.[1];
+  return numeric ? [id, numeric] : [id];
+}
+
 function availableAt(item: CatalogEvidence | undefined, locationId: string | null) {
   if (!item || !locationId) return { quantity: null, locationName: null };
-  const level = item.inventoryLevels.nodes.find((entry) => entry.location.id === locationId);
+  const level = item.inventoryLevels.nodes.find((entry) =>
+    sameShopifyId(entry.location.id, locationId),
+  );
   return {
     quantity:
       level?.quantities.find((quantity) => quantity.name === "available")?.quantity ?? null,
@@ -219,9 +230,10 @@ export async function runInventoryReconciliation(
         .filter((id): id is string => Boolean(id)),
       "adjustments",
     );
-    const groups = new Map(
-      groupNodes.filter(isAdjustmentGroup).map((group) => [group.id, group]),
-    );
+    const groups = new Map<string, AdjustmentGroupEvidence>();
+    for (const group of groupNodes.filter(isAdjustmentGroup)) {
+      for (const alias of evidenceAliases(group.id)) groups.set(alias, group);
+    }
 
     const itemIds = Array.from(
       new Set([
@@ -232,9 +244,10 @@ export async function runInventoryReconciliation(
       ]),
     );
     const itemNodes = await graphqlNodes(admin, itemIds, "items");
-    const catalog = new Map(
-      itemNodes.filter(isCatalogEvidence).map((item) => [item.id, item]),
-    );
+    const catalog = new Map<string, CatalogEvidence>();
+    for (const item of itemNodes.filter(isCatalogEvidence)) {
+      for (const alias of evidenceAliases(item.id)) catalog.set(alias, item);
+    }
 
     let matched = 0;
     let uncertain = 0;
@@ -369,7 +382,8 @@ export async function runInventoryReconciliation(
       const relatedMovement = movements
         .filter(
           (movement) =>
-            movement.inventoryItemId === inventoryItemId && movement.locationId === locationId,
+            sameShopifyId(movement.inventoryItemId, inventoryItemId) &&
+            sameShopifyId(movement.locationId, locationId),
         )
         .at(-1);
       await upsertIssue({
