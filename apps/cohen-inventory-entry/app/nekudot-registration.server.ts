@@ -127,17 +127,51 @@ function publicCardNumber(memberId: string) {
   return `NK-${value.match(/.{1,4}/g)!.join("-")}`;
 }
 
-export async function registrationCardPreview(kindValue: unknown) {
-  registrationKind(kindValue);
-  const claim = registrationClaim();
+function registrationCookieName(kind: RegistrationKind) {
+  return `cohens_nekudot_registration_${kind}`;
+}
+
+function registrationCookie(request: Request, kind: RegistrationKind, value: string, maxAge = 30 * 60) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${registrationCookieName(kind)}=${encodeURIComponent(value)}; Path=/registro/${kind}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+function registrationClaimFromRequest(request: Request, kind: RegistrationKind) {
+  const name = `${registrationCookieName(kind)}=`;
+  const encoded = (request.headers.get("Cookie") || "")
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(name))
+    ?.slice(name.length);
+  if (!encoded) return null;
+  try {
+    const claim = decodeURIComponent(encoded);
+    registrationIdFromClaim(claim);
+    return claim;
+  } catch {
+    return null;
+  }
+}
+
+export async function registrationCardPreview(request: Request, kindValue: unknown) {
+  const kind = registrationKind(kindValue);
+  const claim = registrationClaimFromRequest(request, kind) || registrationClaim();
   const memberId = claim.slice(0, 36);
   const rawQr = qrCredential(memberId);
   return {
-    claim,
-    qrDataUrl: await QRCode.toDataURL(rawQr, { width: 360, margin: 2, errorCorrectionLevel: "M" }),
-    barcodeDataUrl: await barcodeDataUrl(memberId),
-    cardNumber: publicCardNumber(memberId),
+    preview: {
+      claim,
+      qrDataUrl: await QRCode.toDataURL(rawQr, { width: 360, margin: 2, errorCorrectionLevel: "M" }),
+      barcodeDataUrl: await barcodeDataUrl(memberId),
+      cardNumber: publicCardNumber(memberId),
+    },
+    setCookie: registrationCookie(request, kind, claim),
   };
+}
+
+export function clearRegistrationCardPreview(request: Request, kindValue: unknown) {
+  const kind = registrationKind(kindValue);
+  return registrationCookie(request, kind, "", 0);
 }
 
 async function barcodeDataUrl(memberId: string) {

@@ -1,10 +1,10 @@
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
-import { Form, Link, useActionData, useLoaderData, useParams } from "react-router";
+import { data as responseData, Form, Link, useActionData, useLoaderData, useParams } from "react-router";
 import { useEffect, useState } from "react";
 import stylesheet from "../nekudot-public.css?url";
 import { NEKUDOT_COMMUNITIES } from "../nekudot-domain";
 import { nekudotMeta } from "../nekudot-meta";
-import { RegistrationError, registerNekudot, registrationCardPreview } from "../nekudot-registration.server";
+import { clearRegistrationCardPreview, RegistrationError, registerNekudot, registrationCardPreview } from "../nekudot-registration.server";
 
 const PAGE_OPTIONS = {
   plata: {
@@ -36,13 +36,18 @@ export const meta: MetaFunction = ({ params }) => {
   return nekudotMeta(`${option.title} · Cohen's`, option.description);
 };
 
-export async function loader({ params }: LoaderFunctionArgs) {
-  return registrationCardPreview(params.tipo);
+export async function loader({ request, params }: LoaderFunctionArgs) {
+  const { preview, setCookie } = await registrationCardPreview(request, params.tipo);
+  return responseData(preview, { headers: { "Set-Cookie": setCookie } });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
   try {
-    return { ok: true as const, result: await registerNekudot(await request.formData(), params.tipo) };
+    const result = await registerNekudot(await request.formData(), params.tipo);
+    return responseData(
+      { ok: true as const, result },
+      { headers: { "Set-Cookie": clearRegistrationCardPreview(request, params.tipo) } },
+    );
   } catch (error) {
     const caught = error instanceof RegistrationError ? error : new RegistrationError("No se pudo completar el registro.", 500);
     return Response.json({ ok: false as const, error: caught.message }, { status: caught.status });
