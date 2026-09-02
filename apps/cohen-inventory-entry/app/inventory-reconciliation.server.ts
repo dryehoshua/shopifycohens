@@ -200,11 +200,29 @@ export async function runInventoryReconciliation(
   const existing = await db.inventoryReconciliationRun.findUnique({
     where: { shop_triggerKey: { shop, triggerKey } },
   });
-  if (existing) return existing;
+  if (existing && existing.status !== "FAILED") return existing;
 
-  const run = await db.inventoryReconciliationRun.create({
-    data: { shop, triggerKey, source: options.source },
-  });
+  const run = existing
+    ? await db.inventoryReconciliationRun.update({
+        where: { id: existing.id },
+        data: {
+          source: options.source,
+          status: "RUNNING",
+          startedAt: new Date(),
+          completedAt: null,
+          movementsExamined: 0,
+          movementsMatched: 0,
+          externalChanges: 0,
+          uncertainMovements: 0,
+          pendingSales: 0,
+          openIssues: 0,
+          errorMessage: null,
+          metadata: undefined,
+        },
+      })
+    : await db.inventoryReconciliationRun.create({
+        data: { shop, triggerKey, source: options.source },
+      });
 
   try {
     const [movements, auditEvents, pendingRetailSales, pendingCafeSales] =
