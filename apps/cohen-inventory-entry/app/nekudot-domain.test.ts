@@ -16,19 +16,27 @@ import {
   SILVER_CASHBACK_BASIS_POINTS,
 } from "./nekudot-domain.ts";
 
-test("acredita la tasa de cada tarjeta y conserva 5% para el broker", () => {
-  assert.deepEqual(calculateNekudotPurchase(12_345, true, SILVER_CASHBACK_BASIS_POINTS), {
+test("acredita 5% al cliente Blue y otro 5% a su IB", () => {
+  assert.deepEqual(calculateNekudotPurchase(12_345, true, BLUE_CASHBACK_BASIS_POINTS, "BLUE"), {
     purchaseCents: 12_345,
-    clientEarnedCents: 246,
+    clientEarnedCents: 617,
     brokerEarnedCents: 617,
   });
-  assert.equal(calculateNekudotPurchase(12_345, false, BLUE_CASHBACK_BASIS_POINTS).clientEarnedCents, 617);
-  assert.equal(calculateNekudotPurchase(12_345, false, GOLDEN_CASHBACK_BASIS_POINTS).clientEarnedCents, 987);
   assert.equal(calculateRateCents(100), 2);
 });
 
-test("no genera comisión cuando el cliente no tiene broker", () => {
-  assert.equal(calculateNekudotPurchase(10_000, false).brokerEarnedCents, 0);
+test("no genera comisión IB fuera de Blue ni cuando Blue no tiene IB", () => {
+  assert.deepEqual(calculateNekudotPurchase(12_345, true, SILVER_CASHBACK_BASIS_POINTS, "SILVER"), {
+    purchaseCents: 12_345,
+    clientEarnedCents: 246,
+    brokerEarnedCents: 0,
+  });
+  assert.deepEqual(calculateNekudotPurchase(12_345, true, GOLDEN_CASHBACK_BASIS_POINTS, "GOLDEN"), {
+    purchaseCents: 12_345,
+    clientEarnedCents: 987,
+    brokerEarnedCents: 0,
+  });
+  assert.equal(calculateNekudotPurchase(10_000, false, BLUE_CASHBACK_BASIS_POINTS, "BLUE").brokerEarnedCents, 0);
 });
 
 test("normaliza códigos de broker", () => {

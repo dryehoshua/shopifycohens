@@ -669,6 +669,8 @@ model NekudotBroker {
   displayName             String
   email                   String?
   phone                   String?
+  community               String?
+  referralWord            String?
   active                  Boolean  @default(true)
   commissionBalanceCents  Int      @default(0)
   lifetimeCommissionCents Int      @default(0)
@@ -682,6 +684,7 @@ model NekudotBroker {
   portalSessions NekudotBrokerSession[]
 
   @@unique([programKey, code])
+  @@unique([programKey, referralWord])
   @@index([programKey, active, displayName])
 }
 

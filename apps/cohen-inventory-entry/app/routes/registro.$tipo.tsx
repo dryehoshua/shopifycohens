@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
-import { data as responseData, Form, Link, useActionData, useLoaderData, useParams } from "react-router";
+import { data as responseData, Form, Link, useActionData, useLoaderData, useParams, useSearchParams } from "react-router";
 import { useEffect, useState } from "react";
 import stylesheet from "../nekudot-public.css?url";
 import { NEKUDOT_COMMUNITIES } from "../nekudot-domain";
@@ -60,6 +60,7 @@ function cardClass(tipo: string) {
 
 export default function RegistrationPage() {
   const params = useParams();
+  const [searchParams] = useSearchParams();
   const tipo = pageKind(params.tipo);
   const option = PAGE_OPTIONS[tipo];
   const preview = useLoaderData<typeof loader>();
@@ -71,6 +72,7 @@ export default function RegistrationPage() {
   const [community, setCommunity] = useState("");
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview); }, [photoPreview]);
   const liveName = `${firstName} ${lastName}`.trim();
+  const referredIbCode = String(searchParams.get("ib") || "").slice(0, 40);
   const description = tipo === "plata"
     ? option.description
     : tipo === "blue"
@@ -91,7 +93,7 @@ export default function RegistrationPage() {
           <label className="nk-field full">Comunidad<select name="community" required defaultValue="" onChange={(event) => setCommunity(event.currentTarget.value)}><option value="" disabled>Selecciona tu comunidad</option>{NEKUDOT_COMMUNITIES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
           <label className="nk-field">Teléfono móvil<input name="phone" required inputMode="tel" autoComplete="tel" placeholder="55 1234 5678" /></label>
           <label className="nk-field">Correo electrónico<input name="email" type="email" required autoComplete="email" /></label>
-          {tipo === "blue" ? <label className="nk-field full">Código de tu IB<input name="ibCode" required autoCapitalize="characters" autoComplete="off" placeholder="Ej. BET-MIDRASH-CENTRO" /><small>Escribe la clave única que te entregó tu IB.</small></label> : null}
+          {tipo === "blue" ? <label className="nk-field full">Código de tu IB<input name="ibCode" required autoCapitalize="characters" autoComplete="off" placeholder="Ej. BET-MIDRASH-CENTRO" defaultValue={referredIbCode} /><small>Escribe la clave única que te entregó tu IB.</small></label> : null}
           <label className="nk-field full">Foto (opcional)<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
             if (photoPreview) URL.revokeObjectURL(photoPreview);
             setPhotoPreview(event.currentTarget.files?.[0] ? URL.createObjectURL(event.currentTarget.files[0]) : null);

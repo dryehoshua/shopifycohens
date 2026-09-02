@@ -204,6 +204,9 @@ export async function bindNekudotCredential(input: {
   const cardTier = normalizeNekudotCardTier(input.cardTier);
   if (!new Set(["RFID", "QR", "RFID_OR_QR"]).has(kind)) throw new NekudotError("Tipo de credencial no válido.");
   const brokerId = String(input.brokerId ?? "").trim() || null;
+  if (brokerId && cardTier !== "BLUE") {
+    throw new NekudotError("Los IBs sólo pueden vincularse a tarjetas Blue.");
+  }
   if (brokerId) {
     const broker = await db.nekudotBroker.findFirst({ where: { id: brokerId, programKey: NEKUDOT_PROGRAM_KEY, active: true } });
     if (!broker) throw new NekudotError("El broker seleccionado no está activo.", 404);
@@ -247,7 +250,7 @@ export async function bindNekudotCredential(input: {
         email: customer.defaultEmailAddress?.emailAddress ?? null,
         active: true,
         cardTier,
-        ...(brokerId ? { brokerId } : {}),
+        brokerId,
       },
     });
     await transaction.nekudotCustomerIdentity.upsert({
@@ -619,7 +622,7 @@ export async function reconcileNekudotOrder(input: OrderInput) {
   const cashbackBasisPoints = keepsOriginalRate
     ? existingAccrual!.cashbackBasisPoints
     : cashbackBasisPointsForTier(cashbackTier);
-  const target = calculateNekudotPurchase(purchaseCents, Boolean(brokerId), cashbackBasisPoints);
+  const target = calculateNekudotPurchase(purchaseCents, Boolean(brokerId), cashbackBasisPoints, cashbackTier);
   const hash = createHash("sha256").update(JSON.stringify({
     order: input.shopifyOrderId,
     updated: input.orderUpdatedAt.toISOString(),

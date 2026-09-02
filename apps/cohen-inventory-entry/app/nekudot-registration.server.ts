@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import bwipjs from "bwip-js";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
-import { NEKUDOT_PROGRAM_KEY, normalizeNekudotCommunity, type NekudotCardTier } from "./nekudot-domain";
+import { NEKUDOT_PROGRAM_KEY, normalizeBrokerCode, normalizeNekudotCommunity, type NekudotCardTier } from "./nekudot-domain";
 import { unauthenticated } from "./shopify.server";
 
 export type RegistrationKind = "plata" | "blue" | "golden" | "vales";
@@ -196,6 +196,79 @@ async function brokerForInviteCode(value: unknown) {
   return broker;
 }
 
+function publicBrokerWord(value: unknown) {
+  const word = String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "")
+    .slice(0, 24);
+  if (word.length < 3) throw new RegistrationError("Tu palabra debe tener entre 3 y 24 letras o números.");
+  return word;
+}
+
+function publicBrokerCode(value: unknown) {
+  try {
+    return normalizeBrokerCode(value);
+  } catch {
+    throw new RegistrationError("El código de referido debe tener entre 2 y 40 letras o números.");
+  }
+}
+
+export async function registerPublicBroker(formData: FormData) {
+  if (String(formData.get("website") || "")) throw new RegistrationError("No se pudo procesar el registro.");
+  if (formData.get("privacy") !== "yes") throw new RegistrationError("Debes aceptar el aviso de privacidad.");
+
+  const displayName = cleanText(formData.get("displayName"), "tu nombre completo", 100);
+  const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
+  const phone = normalizeMexicanPhone(formData.get("phone"));
+  const community = registrationCommunity(formData.get("community"));
+  const referralWord = publicBrokerWord(formData.get("referralWord"));
+  const code = publicBrokerCode(formData.get("code"));
+
+  const conflict = await db.nekudotBroker.findFirst({
+    where: {
+      programKey: NEKUDOT_PROGRAM_KEY,
+      OR: [{ code }, { referralWord }, { email }, { phone }],
+    },
+  });
+  if (conflict) {
+    if (conflict.phone === phone || conflict.email?.toLowerCase() === email) {
+      throw new RegistrationError("Ya existe un perfil IB con ese teléfono o correo. Entra al portal IB para continuar.", 409);
+    }
+    if (conflict.code === code) throw new RegistrationError("Ese código de referido ya está ocupado. Elige otro.", 409);
+    throw new RegistrationError("Esa palabra ya está ocupada. Elige otra.", 409);
+  }
+
+  try {
+    const broker = await db.nekudotBroker.create({
+      data: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        displayName,
+        email,
+        phone,
+        community,
+        referralWord,
+        code,
+        active: true,
+      },
+    });
+    return {
+      displayName: broker.displayName,
+      code: broker.code,
+      referralWord: broker.referralWord,
+      community: broker.community,
+      referralPath: `/registro/blue?ib=${encodeURIComponent(broker.code)}`,
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      throw new RegistrationError("La palabra o el código ya están ocupados. Elige otros.", 409);
+    }
+    throw error;
+  }
+}
+
 function credentialHash(rawToken: string) {
   return createHmac("sha256", hmacSecret()).update(`${NEKUDOT_PROGRAM_KEY}:${rawToken}`).digest("hex");
 }
@@ -302,7 +375,7 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
     const saved = existing
       ? await transaction.nekudotMember.update({
         where: { id: existing.id },
-        data: { displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", ...(broker ? { brokerId: broker.id } : {}) },
+        data: { displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },
       })
       : await transaction.nekudotMember.create({
         data: { id: registrationId, programKey: NEKUDOT_PROGRAM_KEY, displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },

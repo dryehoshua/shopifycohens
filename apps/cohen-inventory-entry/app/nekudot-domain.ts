@@ -95,11 +95,13 @@ export function calculateNekudotPurchase(
   purchaseCents: number,
   hasBroker: boolean,
   clientCashbackBasisPoints = SILVER_CASHBACK_BASIS_POINTS,
+  cardTier: unknown = "SILVER",
 ) {
+  const normalizedTier = normalizeNekudotCardTier(cardTier);
   return {
     purchaseCents,
     clientEarnedCents: calculateRateCents(purchaseCents, clientCashbackBasisPoints),
-    brokerEarnedCents: hasBroker
+    brokerEarnedCents: hasBroker && normalizedTier === "BLUE"
       ? calculateRateCents(purchaseCents, BROKER_COMMISSION_BASIS_POINTS)
       : 0,
   };
