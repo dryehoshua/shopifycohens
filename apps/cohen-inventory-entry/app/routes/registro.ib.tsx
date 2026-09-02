@@ -44,7 +44,7 @@ export default function BrokerRegistrationPage() {
         <div className="nk-ib-rate"><strong>5%</strong><span>de comisión sobre las compras de tus referidos Blue</span></div>
         <div className="nk-ib-photo"><img src="/og-nekudot-ib.png" alt="Líderes del Programa IB Cohen's" /></div>
         <div className="nk-ib-steps">
-          <article><b>1</b><div><strong>Regístrate</strong><p>Elige tu palabra y tu código de referido.</p></div></article>
+          <article><b>1</b><div><strong>Regístrate</strong><p>Elige tu código único de referido.</p></div></article>
           <article><b>2</b><div><strong>Comparte</strong><p>Tus invitados se registran con tarjeta Blue y tu código.</p></div></article>
           <article><b>3</b><div><strong>Consulta</strong><p>Ve tu red y comisiones desde el portal IB.</p></div></article>
         </div>
@@ -56,7 +56,6 @@ export default function BrokerRegistrationPage() {
           <p className="nk-eyebrow">PERFIL ACTIVO</p>
           <h2>¡Bienvenido, {result.displayName}!</h2>
           <p>Tu perfil IB ya está listo. Comparte este código o el enlace directo con tus referidos:</p>
-          <div className="nk-ib-result"><small>Tu palabra</small><strong>{result.referralWord}</strong></div>
           <div className="nk-ib-result"><small>Tu código de referido</small><strong>{result.code}</strong></div>
           <div className="nk-ib-success-actions">
             <Link className="nk-button" to={result.referralPath}>Abrir enlace para referidos</Link>
@@ -71,8 +70,7 @@ export default function BrokerRegistrationPage() {
             <label className="nk-field">Teléfono móvil<input name="phone" required inputMode="tel" autoComplete="tel" placeholder="55 1234 5678" /></label>
             <label className="nk-field">Correo electrónico<input name="email" type="email" required autoComplete="email" /></label>
             <label className="nk-field full">Comunidad<select name="community" required defaultValue=""><option value="" disabled>Selecciona tu comunidad</option>{NEKUDOT_COMMUNITIES.map((community) => <option key={community} value={community}>{community}</option>)}</select></label>
-            <label className="nk-field">Tu palabra<input name="referralWord" required minLength={3} maxLength={24} autoCapitalize="characters" autoComplete="off" placeholder="Ej. SHALOM" /><small>Una palabra pública para identificar tu campaña; no es contraseña.</small></label>
-            <label className="nk-field">Código de referido<input name="code" required minLength={2} maxLength={40} autoCapitalize="characters" autoComplete="off" placeholder="Ej. DAVID-01" /><small>Será el código que usarán tus clientes al registrarse.</small></label>
+            <label className="nk-field full">Código de referido<input name="code" required minLength={2} maxLength={40} autoCapitalize="characters" autoComplete="off" placeholder="Ej. DAVID-01" /><small>Será tu identificador público y el código que usarán tus clientes Blue al registrarse.</small></label>
             <label className="nk-honeypot" aria-hidden="true">Sitio web<input name="website" tabIndex={-1} autoComplete="off" /></label>
             <label className="nk-checkbox"><input name="privacy" type="checkbox" value="yes" required /> Acepto el aviso de privacidad y las condiciones del Programa IB de Cohen&apos;s.</label>
             {data && "error" in data && data.error ? <div className="nk-status error">{String(data.error)}</div> : null}

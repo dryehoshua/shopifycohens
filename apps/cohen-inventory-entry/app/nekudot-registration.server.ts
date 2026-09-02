@@ -235,17 +235,6 @@ async function brokerForInviteCode(value: unknown) {
   return broker;
 }
 
-function publicBrokerWord(value: unknown) {
-  const word = String(value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "")
-    .slice(0, 24);
-  if (word.length < 3) throw new RegistrationError("Tu palabra debe tener entre 3 y 24 letras o números.");
-  return word;
-}
-
 function publicBrokerCode(value: unknown) {
   try {
     return normalizeBrokerCode(value);
@@ -263,13 +252,12 @@ export async function registerPublicBroker(formData: FormData) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
   const phone = normalizeMexicanPhone(formData.get("phone"));
   const community = registrationCommunity(formData.get("community"));
-  const referralWord = publicBrokerWord(formData.get("referralWord"));
   const code = publicBrokerCode(formData.get("code"));
 
   const conflict = await db.nekudotBroker.findFirst({
     where: {
       programKey: NEKUDOT_PROGRAM_KEY,
-      OR: [{ code }, { referralWord }, { email }, { phone }],
+      OR: [{ code }, { email }, { phone }],
     },
   });
   if (conflict) {
@@ -277,7 +265,6 @@ export async function registerPublicBroker(formData: FormData) {
       throw new RegistrationError("Ya existe un perfil IB con ese teléfono o correo. Entra al portal IB para continuar.", 409);
     }
     if (conflict.code === code) throw new RegistrationError("Ese código de referido ya está ocupado. Elige otro.", 409);
-    throw new RegistrationError("Esa palabra ya está ocupada. Elige otra.", 409);
   }
 
   try {
@@ -288,7 +275,6 @@ export async function registerPublicBroker(formData: FormData) {
         email,
         phone,
         community,
-        referralWord,
         code,
         active: true,
       },
@@ -296,13 +282,12 @@ export async function registerPublicBroker(formData: FormData) {
     return {
       displayName: broker.displayName,
       code: broker.code,
-      referralWord: broker.referralWord,
       community: broker.community,
       referralPath: `/registro/blue?ib=${encodeURIComponent(broker.code)}`,
     };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
-      throw new RegistrationError("La palabra o el código ya están ocupados. Elige otros.", 409);
+      throw new RegistrationError("Ese código de referido ya está ocupado. Elige otro.", 409);
     }
     throw error;
   }
