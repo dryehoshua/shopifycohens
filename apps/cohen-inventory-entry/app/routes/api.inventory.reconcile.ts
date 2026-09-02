@@ -32,14 +32,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         select: { shop: true },
       })).map((session) => session.shop);
 
-  const results = [];
+  const results: Array<{
+    shop: string;
+    runId?: string;
+    status: string;
+    openIssues?: number;
+    error?: string;
+  }> = [];
   for (const shop of shops) {
-    const { admin } = await unauthenticated.admin(shop);
-    const run = await runInventoryReconciliation(admin, shop, {
-      source: "SCHEDULED",
-      triggerKey: `daily:${date}`,
-    });
-    results.push({ shop, runId: run.id, status: run.status, openIssues: run.openIssues });
+    try {
+      const { admin } = await unauthenticated.admin(shop);
+      const run = await runInventoryReconciliation(admin, shop, {
+        source: "SCHEDULED",
+        triggerKey: `daily:${date}`,
+      });
+      results.push({ shop, runId: run.id, status: run.status, openIssues: run.openIssues });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Error desconocido";
+      console.error(`[inventory-reconciliation] ${shop}: ${message}`, error);
+      results.push({ shop, status: "FAILED", error: message.slice(0, 2_000) });
+    }
   }
-  return Response.json({ ok: true, date, results });
+  const failed = results.filter((result) => result.status === "FAILED");
+  return Response.json(
+    { ok: failed.length === 0, date, results },
+    { status: failed.length === 0 ? 200 : 500 },
+  );
 };
