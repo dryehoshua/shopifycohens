@@ -10,6 +10,8 @@ export const meta: MetaFunction = () =>
   nekudotMeta(
     "Únete como IB · Cohen's",
     "Comparte Cohen's con tu comunidad y gana el 5% de las compras elegibles de tus referidos Blue.",
+    "/og-nekudot-ib.png",
+    "Programa IB Cohen's: liderazgo y crecimiento dentro de la comunidad",
   );
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -40,7 +42,7 @@ export default function BrokerRegistrationPage() {
         <h1>Tu comunidad compra.<br /><em>Tú ganas el 5%.</em></h1>
         <p className="nk-ib-copy">Presenta Cohen&apos;s a tu Beit Midrash, Beit Kneset o comunidad. Comparte tu código personal y recibe una comisión por las compras elegibles de las personas que se registren contigo con tarjeta Blue.</p>
         <div className="nk-ib-rate"><strong>5%</strong><span>de comisión sobre las compras de tus referidos Blue</span></div>
-        <div className="nk-ib-photo"><img src="/og-nekudot.jpg" alt="Cliente Cohen's disfrutando más compras gracias a sus beneficios" /></div>
+        <div className="nk-ib-photo"><img src="/og-nekudot-ib.png" alt="Líderes del Programa IB Cohen's" /></div>
         <div className="nk-ib-steps">
           <article><b>1</b><div><strong>Regístrate</strong><p>Elige tu palabra y tu código de referido.</p></div></article>
           <article><b>2</b><div><strong>Comparte</strong><p>Tus invitados se registran con tarjeta Blue y tu código.</p></div></article>

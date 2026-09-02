@@ -96,6 +96,17 @@ h1 { font: 700 clamp(32px, 6vw, 52px)/1.05 Georgia, serif; margin-bottom: 14px; 
 .nk-pill { display: inline-block; padding: 5px 9px; border-radius: 999px; background: #eee5da; font-size: 12px; font-weight: 800; }
 .nk-ledger { display: grid; gap: 10px; margin-bottom: 24px; }
 .nk-ledger-item { display: flex; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid #ded2c4; }
+.nk-existing-matches { grid-column: 1 / -1; display: grid; gap: 10px; min-width: 0; margin: 4px 0 0; padding: 18px; border: 1px solid #d6c29d; border-radius: 16px; background: #fff9ed; }
+.nk-existing-matches legend { padding: 0 7px; color: #0a2341; font: 700 19px/1.2 Georgia, serif; }
+.nk-existing-matches > p { margin: 0 0 5px; color: #6e6258; font-size: 12px; line-height: 1.5; }
+.nk-existing-matches > label { display: flex; align-items: center; gap: 12px; padding: 13px; border: 1px solid #ded2c4; border-radius: 12px; background: #fff; cursor: pointer; }
+.nk-existing-matches > label:has(input:checked) { border-color: #b48a43; box-shadow: 0 0 0 2px rgb(180 138 67 / 18%); }
+.nk-existing-matches input { width: 18px; height: 18px; accent-color: #0a3a64; }
+.nk-existing-matches span { min-width: 0; }
+.nk-existing-matches strong, .nk-existing-matches small { display: block; }
+.nk-existing-matches strong { color: #17263b; font-size: 14px; }
+.nk-existing-matches small { margin-top: 3px; color: #74695f; font-size: 11px; overflow-wrap: anywhere; }
+.nk-existing-verify { padding: 4px 0; }
 .nk-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 @media (max-width: 820px) { .nk-grid { grid-template-columns: 1fr; } .nk-card { position: static; width: min(440px, 100%); margin: 0 auto; } }
 @media (max-width: 900px) { .nk-ib-hero { grid-template-columns: 1fr; } .nk-ib-form-card { position: static; } }

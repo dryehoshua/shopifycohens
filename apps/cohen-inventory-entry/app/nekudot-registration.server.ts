@@ -97,6 +97,45 @@ function secureEquals(left: string, right: string) {
   return timingSafeEqual(a, b);
 }
 
+function maskedName(value: string) {
+  return value.split(/\s+/).filter(Boolean).map((part) => `${part.slice(0, 1)}${"•".repeat(Math.min(3, Math.max(1, part.length - 1)))}`).join(" ");
+}
+
+function maskedEmail(value: string | null) {
+  if (!value) return null;
+  const [local, domain] = value.split("@", 2);
+  if (!local || !domain) return null;
+  return `${local.slice(0, 1)}•••@${domain}`;
+}
+
+function existingMemberToken(memberId: string) {
+  const expiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
+  const payload = `${memberId}.${expiresAt}`;
+  const signature = createHmac("sha256", hmacSecret()).update(`existing-member:${payload}`).digest("base64url").slice(0, 24);
+  return Buffer.from(`${payload}.${signature}`).toString("base64url");
+}
+
+async function memberFromExistingToken(value: unknown) {
+  let decoded = "";
+  try {
+    decoded = Buffer.from(String(value || ""), "base64url").toString("utf8");
+  } catch {
+    throw new RegistrationError("La selección expiró. Vuelve a revisar tus datos.", 409);
+  }
+  const match = /^([A-Za-z0-9_-]{8,64})\.(\d{10})\.([A-Za-z0-9_-]{24})$/.exec(decoded);
+  if (!match || Number(match[2]) < Math.floor(Date.now() / 1000)) {
+    throw new RegistrationError("La selección expiró. Vuelve a revisar tus datos.", 409);
+  }
+  const payload = `${match[1]}.${match[2]}`;
+  const expected = createHmac("sha256", hmacSecret()).update(`existing-member:${payload}`).digest("base64url").slice(0, 24);
+  if (!secureEquals(match[3], expected)) throw new RegistrationError("La selección no es válida.", 409);
+  const member = await db.nekudotMember.findFirst({
+    where: { id: match[1], programKey: NEKUDOT_PROGRAM_KEY, active: true, phone: { not: null } },
+  });
+  if (!member?.phone) throw new RegistrationError("Esta cuenta necesita ayuda para recuperar el acceso.", 409);
+  return member;
+}
+
 function qrCredential(memberId: string) {
   return `NKD1-${createHmac("sha256", hmacSecret()).update(`qr:${memberId}`).digest("base64url").slice(0, 32)}`;
 }
@@ -338,6 +377,44 @@ async function setCustomerTags(admin: AdminApiContext, customerId: string, tag: 
   if (added.tagsAdd.userErrors.length) throw new RegistrationError(added.tagsAdd.userErrors.map((error) => error.message).join("; "), 502);
 }
 
+export async function findRegistrationMatches(formData: FormData, kindValue: unknown) {
+  const kind = registrationKind(kindValue);
+  registrationIdFromClaim(formData.get("registrationClaim"));
+  if (String(formData.get("website") || "")) throw new RegistrationError("No se pudo procesar el registro.");
+  if (formData.get("privacy") !== "yes") throw new RegistrationError("Debes aceptar el aviso de privacidad.");
+
+  const firstName = cleanText(formData.get("firstName"), "tu nombre", 60);
+  const lastName = cleanText(formData.get("lastName"), "tus apellidos", 80);
+  const community = registrationCommunity(formData.get("community"));
+  const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
+  const phone = normalizeMexicanPhone(formData.get("phone"));
+  const displayName = `${firstName} ${lastName}`;
+  const ibCode = kind === "blue" ? String(formData.get("ibCode") || "").trim().slice(0, 40) : "";
+
+  const members = await db.nekudotMember.findMany({
+    where: {
+      programKey: NEKUDOT_PROGRAM_KEY,
+      active: true,
+      phone: { not: null },
+      OR: [{ phone }, { email }, { displayName }],
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 5,
+  });
+
+  return {
+    submitted: { firstName, lastName, community, email, phone, ibCode },
+    matches: members.map((member) => ({
+      token: existingMemberToken(member.id),
+      name: maskedName(member.displayName),
+      phone: `•••• ${member.phone!.slice(-4)}`,
+      email: maskedEmail(member.email),
+      cardTier: member.cardTier,
+    })),
+  };
+}
+
 export async function registerNekudot(formData: FormData, kindValue: unknown) {
   const kind = registrationKind(kindValue);
   const option = REGISTRATION_OPTIONS[kind];
@@ -362,6 +439,12 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
     if (customerEmail !== email || customerPhone !== phone) {
       throw new RegistrationError("Ya existe un cliente con parte de estos datos. Entra con el teléfono registrado o solicita ayuda para vincular la cuenta.", 409);
     }
+    const linkedIdentity = await db.nekudotCustomerIdentity.findUnique({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customer.id } },
+    });
+    if (linkedIdentity) {
+      throw new RegistrationError("Esta cuenta Nekudot ya existe. Selecciona el registro correspondiente y confirma el código SMS para continuar.", 409);
+    }
   }
   if (!customer) customer = await createCustomer(admin, { firstName, lastName, email, phone, tag: option.tag });
   else await setCustomerTags(admin, customer.id, option.tag);
@@ -372,14 +455,10 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
       where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customer!.id } },
     });
     const existing = identity ? await transaction.nekudotMember.findUnique({ where: { id: identity.memberId } }) : null;
-    const saved = existing
-      ? await transaction.nekudotMember.update({
-        where: { id: existing.id },
-        data: { displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },
-      })
-      : await transaction.nekudotMember.create({
-        data: { id: registrationId, programKey: NEKUDOT_PROGRAM_KEY, displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },
-      });
+    if (existing) throw new RegistrationError("Esta cuenta Nekudot ya existe. Confirma su código SMS para continuar.", 409);
+    const saved = await transaction.nekudotMember.create({
+      data: { id: registrationId, programKey: NEKUDOT_PROGRAM_KEY, displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },
+    });
     await transaction.nekudotCustomerIdentity.upsert({
       where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customer!.id } },
       create: {
@@ -666,20 +745,13 @@ async function createSilverMemberForExistingCustomer(phone: string) {
   });
 }
 
-export async function sendPortalOtp(phoneValue: unknown) {
-  const phone = normalizeMexicanPhone(phoneValue);
-  const member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
-  if (!member) {
-    const { customer } = await shopifyCustomerForPhone(phone);
-    if (!customer) return { phone, sent: true };
-  }
+async function sendPhoneOtp(phone: string) {
   if (process.env.NODE_ENV !== "production" && process.env.NEKUDOT_DEV_OTP) return { phone, sent: true };
   await twilioPost("Verifications", new URLSearchParams({ To: phone, Channel: "sms", Locale: "es" }));
   return { phone, sent: true };
 }
 
-export async function verifyPortalOtp(phoneValue: unknown, codeValue: unknown) {
-  const phone = normalizeMexicanPhone(phoneValue);
+async function verifyPhoneOtp(phone: string, codeValue: unknown) {
   const code = String(codeValue || "").trim();
   let approved = process.env.NODE_ENV !== "production" && Boolean(process.env.NEKUDOT_DEV_OTP) && secureEquals(code, process.env.NEKUDOT_DEV_OTP || "");
   if (!approved) {
@@ -687,14 +759,45 @@ export async function verifyPortalOtp(phoneValue: unknown, codeValue: unknown) {
     approved = result.status === "approved";
   }
   if (!approved) throw new RegistrationError("El código no es correcto o ya venció.", 401);
-  let member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
-  if (!member) member = await createSilverMemberForExistingCustomer(phone);
-  if (!member) throw new RegistrationError("No encontramos una cuenta Nekudot con ese teléfono.", 404);
+}
+
+async function createMemberPortalSession(member: { id: string }) {
   const token = randomBytes(32).toString("base64url");
   await db.nekudotPortalSession.create({
     data: { tokenHash: createHash("sha256").update(token).digest("hex"), memberId: member.id, expiresAt: new Date(Date.now() + SESSION_SECONDS * 1000) },
   });
   return { member, cookie: `${PORTAL_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${process.env.NODE_ENV === "production" ? "; Secure" : ""}` };
+}
+
+export async function sendPortalOtp(phoneValue: unknown) {
+  const phone = normalizeMexicanPhone(phoneValue);
+  const member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
+  if (!member) {
+    const { customer } = await shopifyCustomerForPhone(phone);
+    if (!customer) return { phone, sent: true };
+  }
+  return sendPhoneOtp(phone);
+}
+
+export async function verifyPortalOtp(phoneValue: unknown, codeValue: unknown) {
+  const phone = normalizeMexicanPhone(phoneValue);
+  await verifyPhoneOtp(phone, codeValue);
+  let member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
+  if (!member) member = await createSilverMemberForExistingCustomer(phone);
+  if (!member) throw new RegistrationError("No encontramos una cuenta Nekudot con ese teléfono.", 404);
+  return createMemberPortalSession(member);
+}
+
+export async function sendExistingRegistrationOtp(matchToken: unknown) {
+  const member = await memberFromExistingToken(matchToken);
+  await sendPhoneOtp(member.phone!);
+  return { matchToken: String(matchToken), phoneHint: `•••• ${member.phone!.slice(-4)}` };
+}
+
+export async function verifyExistingRegistrationOtp(matchToken: unknown, codeValue: unknown) {
+  const member = await memberFromExistingToken(matchToken);
+  await verifyPhoneOtp(member.phone!, codeValue);
+  return createMemberPortalSession(member);
 }
 
 export async function sendBrokerOtp(phoneValue: unknown) {
