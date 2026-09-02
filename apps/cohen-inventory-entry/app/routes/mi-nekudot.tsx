@@ -10,7 +10,7 @@ export const meta: MetaFunction = () =>
   nekudotMeta(
     "Nekudot · Cohen's",
     "Abre tu tarjeta digital Cohen's y consulta tus puntos, saldo y compras.",
-    "/og-nekudot-puntos.png",
+    "/og-nekudot-puntos.png?v=20260902b",
     "Cohen's Nekudot: consulta tus puntos y el valor de tu cashback",
   );
 

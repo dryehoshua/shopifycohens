@@ -11,7 +11,7 @@ export const meta: MetaFunction = () =>
   nekudotMeta(
     "Únete como IB · Cohen's",
     "Comparte Cohen's con tu comunidad y gana el 5% de las compras elegibles de tus referidos Blue.",
-    "/og-nekudot-ib.png",
+    "/og-nekudot-ib.png?v=20260902b",
     "Programa IB Cohen's: liderazgo y crecimiento dentro de la comunidad",
   );
 

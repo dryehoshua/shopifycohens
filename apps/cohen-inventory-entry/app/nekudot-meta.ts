@@ -18,8 +18,8 @@ export function nekudotMeta(
     { property: "og:locale", content: "es_MX" },
     { property: "og:site_name", content: "Cohen's · Nekudot" },
     { property: "og:image", content: socialImage },
-    { property: "og:image:width", content: "1536" },
-    { property: "og:image:height", content: "1024" },
+    { property: "og:image:width", content: "1200" },
+    { property: "og:image:height", content: "630" },
     {
       property: "og:image:alt",
       content: imageAlt,
