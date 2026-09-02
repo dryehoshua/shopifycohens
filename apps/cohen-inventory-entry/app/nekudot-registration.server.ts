@@ -56,11 +56,36 @@ export function registrationKind(value: unknown): RegistrationKind {
   return kind as RegistrationKind;
 }
 
-export function normalizeMexicanPhone(value: unknown) {
-  const digits = String(value || "").replace(/\D/g, "");
-  const normalized = digits.length === 10 ? `+52${digits}` : `+${digits}`;
-  if (!/^\+[1-9]\d{9,14}$/.test(normalized)) throw new RegistrationError("Escribe un teléfono válido con 10 dígitos.");
+export function normalizeInternationalPhone(
+  value: unknown,
+  countryCodeValue: unknown = "+52",
+  customCountryCodeValue: unknown = "",
+) {
+  const raw = String(value || "").normalize("NFKC").trim();
+  const digits = raw.replace(/\D/g, "");
+  const selectedCode = String(countryCodeValue || "+52").trim();
+  const countryCode = selectedCode === "other"
+    ? String(customCountryCodeValue || "").trim()
+    : selectedCode;
+  if (!/^\+[1-9]\d{0,3}$/.test(countryCode)) {
+    throw new RegistrationError("Selecciona una lada internacional válida.");
+  }
+  const prefixDigits = countryCode.slice(1);
+  const alreadyInternational = raw.startsWith("+")
+    || (digits.length > 10 && digits.startsWith(prefixDigits));
+  const normalized = alreadyInternational ? `+${digits}` : `${countryCode}${digits}`;
+  if (!/^\+[1-9]\d{9,14}$/.test(normalized)) {
+    throw new RegistrationError("Escribe un teléfono válido, incluyendo su país.");
+  }
   return normalized;
+}
+
+function phoneFromFormData(formData: FormData) {
+  return normalizeInternationalPhone(
+    formData.get("phone"),
+    formData.get("countryCode"),
+    formData.get("customCountryCode"),
+  );
 }
 
 function cleanText(value: unknown, label: string, max = 100) {
@@ -162,8 +187,10 @@ function registrationIdFromClaim(value: unknown) {
 }
 
 function publicCardNumber(memberId: string) {
-  const value = createHash("sha256").update(`nekudot-card:${memberId}`).digest("hex").slice(0, 16).toUpperCase();
-  return `NK-${value.match(/.{1,4}/g)!.join("-")}`;
+  const seed = BigInt(`0x${createHash("sha256").update(`nekudot-barcode:${memberId}`).digest("hex").slice(0, 16)}`);
+  const body = `2${(seed % 100_000_000_000n).toString().padStart(11, "0")}`;
+  const sum = [...body].reduce((total, digit, index) => total + Number(digit) * (index % 2 === 0 ? 1 : 3), 0);
+  return `${body}${(10 - (sum % 10)) % 10}`;
 }
 
 function registrationCookieName(kind: RegistrationKind) {
@@ -215,13 +242,14 @@ export function clearRegistrationCardPreview(request: Request, kindValue: unknow
 
 async function barcodeDataUrl(memberId: string) {
   const png = await bwipjs.toBuffer({
-    bcid: "code128",
-    text: qrCredential(memberId),
-    height: 12,
+    bcid: "ean13",
+    text: publicCardNumber(memberId),
+    scale: 4,
+    height: 20,
     includetext: false,
     backgroundcolor: "FFFFFF",
-    paddingwidth: 8,
-    paddingheight: 6,
+    paddingwidth: 18,
+    paddingheight: 8,
   });
   return `data:image/png;base64,${png.toString("base64")}`;
 }
@@ -250,7 +278,7 @@ export async function registerPublicBroker(formData: FormData) {
   const displayName = cleanText(formData.get("displayName"), "tu nombre completo", 100);
   const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
-  const phone = normalizeMexicanPhone(formData.get("phone"));
+  const phone = phoneFromFormData(formData);
   const community = registrationCommunity(formData.get("community"));
   const code = publicBrokerCode(formData.get("code"));
 
@@ -295,6 +323,35 @@ export async function registerPublicBroker(formData: FormData) {
 
 function credentialHash(rawToken: string) {
   return createHmac("sha256", hmacSecret()).update(`${NEKUDOT_PROGRAM_KEY}:${rawToken}`).digest("hex");
+}
+
+async function ensureBarcodeCredential(memberId: string) {
+  const rawBarcode = publicCardNumber(memberId);
+  const tokenHash = credentialHash(rawBarcode);
+  const existing = await db.nekudotCredential.findUnique({
+    where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash } },
+  });
+  if (existing && existing.memberId !== memberId) {
+    throw new RegistrationError("No se pudo asignar un número de tarjeta único. Inténtalo de nuevo.", 409);
+  }
+  if (existing) {
+    await db.nekudotCredential.update({
+      where: { id: existing.id },
+      data: { active: true, revokedAt: null, revokedReason: null, kind: "BARCODE", label: "Código de barras EAN-13" },
+    });
+  } else {
+    await db.nekudotCredential.create({
+      data: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        memberId,
+        tokenHash,
+        lastFour: rawBarcode.slice(-4),
+        kind: "BARCODE",
+        label: "Código de barras EAN-13",
+      },
+    });
+  }
+  return rawBarcode;
 }
 
 function photoDirectory() {
@@ -373,7 +430,7 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   const community = registrationCommunity(formData.get("community"));
   const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
-  const phone = normalizeMexicanPhone(formData.get("phone"));
+  const phone = phoneFromFormData(formData);
   const displayName = `${firstName} ${lastName}`;
   const ibCode = kind === "blue" ? String(formData.get("ibCode") || "").trim().slice(0, 40) : "";
 
@@ -412,7 +469,7 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
   const community = registrationCommunity(formData.get("community"));
   const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
-  const phone = normalizeMexicanPhone(formData.get("phone"));
+  const phone = phoneFromFormData(formData);
   if (formData.get("privacy") !== "yes") throw new RegistrationError("Debes aceptar el aviso de privacidad.");
 
   const shop = registrationShop();
@@ -468,6 +525,7 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
   const { member, rawQr } = registration;
   const photoFileName = await savePhoto(member.id, formData.get("photo"));
   if (photoFileName) await db.nekudotMember.update({ where: { id: member.id }, data: { photoFileName } });
+  await ensureBarcodeCredential(member.id);
   const checkoutUrl = kind === "golden" ? await createGoldenPayment(member.id, displayName, email) : null;
   return {
     memberId: member.id,
@@ -692,7 +750,7 @@ async function createSilverMemberForExistingCustomer(phone: string) {
   await setCustomerTags(admin, customer.id, "NEKUDOT_PLATA");
   const displayName = customer.displayName?.trim() || "Cliente Cohen's";
   const email = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || null;
-  return db.$transaction(async (transaction) => {
+  const saved = await db.$transaction(async (transaction) => {
     const saved = await transaction.nekudotMember.create({
       data: {
         programKey: NEKUDOT_PROGRAM_KEY,
@@ -728,6 +786,8 @@ async function createSilverMemberForExistingCustomer(phone: string) {
     });
     return saved;
   });
+  await ensureBarcodeCredential(saved.id);
+  return saved;
 }
 
 async function sendPhoneOtp(phone: string) {
@@ -754,8 +814,8 @@ async function createMemberPortalSession(member: { id: string }) {
   return { member, cookie: `${PORTAL_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${process.env.NODE_ENV === "production" ? "; Secure" : ""}` };
 }
 
-export async function sendPortalOtp(phoneValue: unknown) {
-  const phone = normalizeMexicanPhone(phoneValue);
+export async function sendPortalOtp(phoneValue: unknown, countryCodeValue?: unknown, customCountryCodeValue?: unknown) {
+  const phone = normalizeInternationalPhone(phoneValue, countryCodeValue, customCountryCodeValue);
   const member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
   if (!member) {
     const { customer } = await shopifyCustomerForPhone(phone);
@@ -765,7 +825,7 @@ export async function sendPortalOtp(phoneValue: unknown) {
 }
 
 export async function verifyPortalOtp(phoneValue: unknown, codeValue: unknown) {
-  const phone = normalizeMexicanPhone(phoneValue);
+  const phone = normalizeInternationalPhone(phoneValue);
   await verifyPhoneOtp(phone, codeValue);
   let member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
   if (!member) member = await createSilverMemberForExistingCustomer(phone);
@@ -785,8 +845,8 @@ export async function verifyExistingRegistrationOtp(matchToken: unknown, codeVal
   return createMemberPortalSession(member);
 }
 
-export async function sendBrokerOtp(phoneValue: unknown) {
-  const phone = normalizeMexicanPhone(phoneValue);
+export async function sendBrokerOtp(phoneValue: unknown, countryCodeValue?: unknown, customCountryCodeValue?: unknown) {
+  const phone = normalizeInternationalPhone(phoneValue, countryCodeValue, customCountryCodeValue);
   const broker = await brokerForPhone(phone);
   if (!broker) return { phone, sent: true };
   if (process.env.NODE_ENV !== "production" && process.env.NEKUDOT_DEV_OTP) return { phone, sent: true };
@@ -795,7 +855,7 @@ export async function sendBrokerOtp(phoneValue: unknown) {
 }
 
 export async function verifyBrokerOtp(phoneValue: unknown, codeValue: unknown) {
-  const phone = normalizeMexicanPhone(phoneValue);
+  const phone = normalizeInternationalPhone(phoneValue);
   const code = String(codeValue || "").trim();
   let approved = process.env.NODE_ENV !== "production" && Boolean(process.env.NEKUDOT_DEV_OTP) && secureEquals(code, process.env.NEKUDOT_DEV_OTP || "");
   if (!approved) {
@@ -816,7 +876,7 @@ async function brokerForPhone(phone: string) {
   const brokers = await db.nekudotBroker.findMany({ where: { programKey: NEKUDOT_PROGRAM_KEY, active: true, phone: { not: null } } });
   return brokers.find((broker) => {
     try {
-      return normalizeMexicanPhone(broker.phone) === phone;
+      return normalizeInternationalPhone(broker.phone) === phone;
     } catch {
       return false;
     }
@@ -900,6 +960,7 @@ export async function brokerDashboard(brokerId: string) {
 export async function memberCardData(memberId: string) {
   const member = await db.nekudotMember.findUnique({ where: { id: memberId }, include: { identities: true } });
   if (!member) throw new RegistrationError("No encontramos la cuenta.", 404);
+  await ensureBarcodeCredential(member.id);
   return {
     ...member,
     availableCents: member.balanceCents - member.reservedCents,

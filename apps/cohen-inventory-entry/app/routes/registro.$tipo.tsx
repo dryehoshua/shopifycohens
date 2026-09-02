@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import stylesheet from "../nekudot-public.css?url";
 import { NEKUDOT_COMMUNITIES } from "../nekudot-domain";
 import { nekudotMeta } from "../nekudot-meta";
+import { NekudotPhoneField } from "../nekudot-phone-field";
 import {
   clearRegistrationCardPreview,
   findRegistrationMatches,
@@ -145,7 +146,7 @@ export default function RegistrationPage() {
           <label className="nk-field">Nombre<input name="firstName" required minLength={2} maxLength={60} autoComplete="given-name" defaultValue={submitted?.firstName} onChange={(event) => setFirstName(event.currentTarget.value)} /></label>
           <label className="nk-field">Apellidos<input name="lastName" required minLength={2} maxLength={80} autoComplete="family-name" defaultValue={submitted?.lastName} onChange={(event) => setLastName(event.currentTarget.value)} /></label>
           <label className="nk-field full">Comunidad<select name="community" required defaultValue={submitted?.community || ""} onChange={(event) => setCommunity(event.currentTarget.value)}><option value="" disabled>Selecciona tu comunidad</option>{NEKUDOT_COMMUNITIES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="nk-field">Teléfono móvil<input name="phone" required inputMode="tel" autoComplete="tel" placeholder="55 1234 5678" defaultValue={submitted?.phone} /></label>
+          <NekudotPhoneField defaultPhone={submitted?.phone} />
           <label className="nk-field">Correo electrónico<input name="email" type="email" required autoComplete="email" defaultValue={submitted?.email} /></label>
           {tipo === "blue" ? <label className="nk-field full">Código de tu IB<input name="ibCode" required autoCapitalize="characters" autoComplete="off" placeholder="Ej. BET-MIDRASH-CENTRO" defaultValue={referredIbCode} /><small>Escribe la clave única que te entregó tu IB.</small></label> : null}
           <label className="nk-field full">Foto (opcional)<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {

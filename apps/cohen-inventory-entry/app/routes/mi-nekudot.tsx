@@ -1,7 +1,8 @@
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
-import { Form, redirect, useActionData, useLoaderData } from "react-router";
+import { Form, Link, redirect, useActionData, useLoaderData } from "react-router";
 import stylesheet from "../nekudot-public.css?url";
 import { nekudotMeta } from "../nekudot-meta";
+import { NekudotPhoneField } from "../nekudot-phone-field";
 import { RegistrationError, logoutPortal, memberCardData, memberOrders, portalMember, sendPortalOtp, verifyPortalOtp } from "../nekudot-registration.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: stylesheet }];
@@ -9,6 +10,8 @@ export const meta: MetaFunction = () =>
   nekudotMeta(
     "Nekudot · Cohen's",
     "Abre tu tarjeta digital Cohen's y consulta tus puntos, saldo y compras.",
+    "/og-nekudot-puntos.png",
+    "Cohen's Nekudot: consulta tus puntos y el valor de tu cashback",
   );
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -19,10 +22,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const form = await request.formData();
   try {
-    const form = await request.formData();
     const intent = String(form.get("intent") || "");
-    if (intent === "send") return { ok: true as const, step: "code" as const, phone: (await sendPortalOtp(form.get("phone"))).phone };
+    if (intent === "send") return { ok: true as const, step: "code" as const, phone: (await sendPortalOtp(form.get("phone"), form.get("countryCode"), form.get("customCountryCode"))).phone };
     if (intent === "verify") {
       const result = await verifyPortalOtp(form.get("phone"), form.get("code"));
       return redirect("/nekudot", { headers: { "Set-Cookie": result.cookie } });
@@ -31,7 +34,10 @@ export async function action({ request }: ActionFunctionArgs) {
     throw new RegistrationError("Operación no válida.");
   } catch (error) {
     const caught = error instanceof RegistrationError ? error : new RegistrationError("No se pudo completar el acceso.", 500);
-    return Response.json({ ok: false as const, error: caught.message }, { status: caught.status });
+    const retry = form.get("intent") === "verify"
+      ? { step: "code" as const, phone: String(form.get("phone") || "") }
+      : {};
+    return Response.json({ ok: false as const, error: caught.message, ...retry }, { status: caught.status });
   }
 }
 
@@ -43,10 +49,11 @@ export default function MemberPortal() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   if (!data.authenticated) {
-    const phone = actionData?.ok && actionData.step === "code" ? actionData.phone : "";
+    const phone = actionData && "step" in actionData && actionData.step === "code" ? actionData.phone : "";
+    const phoneHint = phone ? `•••• ${phone.slice(-4)}` : "";
     return <main className="nk-login"><header className="nk-brand"><span className="nk-mark">C</span><div><strong>Cohen&apos;s</strong><small>Tu tarjeta, compras y puntos</small></div></header><section className="nk-panel">
       <p className="nk-eyebrow">Acceso sin contraseña</p><h1>Nekudot</h1><p className="nk-lead">Recibirás un código por SMS en el teléfono con el que te registraste.</p>
-      {phone ? <Form method="post" className="nk-form"><input type="hidden" name="intent" value="verify" /><input type="hidden" name="phone" value={phone} /><label className="nk-field full">Código SMS<input name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4,10}" autoFocus /></label><div className="nk-actions"><button className="nk-button">Entrar</button></div></Form> : <Form method="post" className="nk-form"><input type="hidden" name="intent" value="send" /><label className="nk-field full">Teléfono móvil<input name="phone" required inputMode="tel" autoComplete="tel" placeholder="55 1234 5678" /></label><div className="nk-actions"><button className="nk-button">Enviar código</button></div></Form>}
+      {phone ? <><p className="nk-otp-hint">Código enviado al número terminado en <strong>{phoneHint}</strong>.</p><Form method="post" className="nk-form"><input type="hidden" name="intent" value="verify" /><input type="hidden" name="phone" value={phone} /><label className="nk-field full">Código SMS<input name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4,10}" autoFocus /></label><div className="nk-actions"><button className="nk-button">Entrar</button></div></Form><div className="nk-otp-actions"><Form method="post"><input type="hidden" name="intent" value="send" /><input type="hidden" name="phone" value={phone} /><button className="nk-text-button" type="submit">Volver a enviar código</button></Form><Link className="nk-text-button" to="/mi-nekudot">Corregir número</Link></div></> : <Form method="post" className="nk-form"><input type="hidden" name="intent" value="send" /><NekudotPhoneField full /><div className="nk-actions"><button className="nk-button">Enviar código</button></div></Form>}
       {actionData && "error" in actionData && actionData.error ? <div className="nk-status error">{String(actionData.error)}</div> : null}
     </section></main>;
   }

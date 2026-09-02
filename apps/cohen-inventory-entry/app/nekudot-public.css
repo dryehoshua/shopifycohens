@@ -18,6 +18,17 @@ h1 { font: 700 clamp(32px, 6vw, 52px)/1.05 Georgia, serif; margin-bottom: 14px; 
 .nk-field.full, .nk-checkbox, .nk-actions, .nk-status { grid-column: 1 / -1; }
 .nk-field input, .nk-field select { width: 100%; border: 1px solid #cdbfae; border-radius: 12px; padding: 13px 14px; background: #fff; color: #2d2119; }
 .nk-field input:focus, .nk-field select:focus { outline: 3px solid rgb(193 142 58 / 20%); border-color: #b77b23; }
+.nk-phone-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.nk-phone-field.full { grid-column: 1 / -1; }
+.nk-phone-field legend { margin-bottom: 7px; padding: 0; font-size: 14px; font-weight: 700; }
+.nk-phone-controls { display: grid; grid-template-columns: minmax(132px, .8fr) minmax(150px, 1.2fr); gap: 9px; }
+.nk-phone-controls label { display: grid; gap: 5px; min-width: 0; }
+.nk-phone-controls label > span { color: #77685d; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.nk-phone-controls input, .nk-phone-controls select { width: 100%; min-width: 0; border: 1px solid #cdbfae; border-radius: 12px; padding: 13px 11px; background: #fff; color: #2d2119; }
+.nk-phone-controls input:focus, .nk-phone-controls select:focus { outline: 3px solid rgb(193 142 58 / 20%); border-color: #b77b23; }
+.nk-phone-field > small { display: block; margin-top: 6px; color: #7c6d61; font-size: 10px; line-height: 1.4; }
+.nk-country-custom { grid-column: 1; }
+.nk-phone-controls:has(.nk-country-custom) .nk-phone-number { grid-column: 2; grid-row: 1 / span 2; }
 .nk-checkbox { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; color: #625249; line-height: 1.45; }
 .nk-checkbox input { margin-top: 3px; }
 .nk-button { display: inline-block; border: 0; border-radius: 13px; padding: 14px 20px; color: #fff; background: #2d2119; font-weight: 800; cursor: pointer; text-decoration: none; }
@@ -40,16 +51,21 @@ h1 { font: 700 clamp(32px, 6vw, 52px)/1.05 Georgia, serif; margin-bottom: 14px; 
 .nk-card-person h2 { margin: 0 0 5px; color: #0a2341; font: 700 25px/1.08 Georgia, serif; overflow-wrap: anywhere; }
 .nk-card-person p { margin: 0; color: #6d6258; font-size: 13px; }
 .nk-card-balance { display: block; color: #9a6b22; font-size: 16px; margin-top: 8px; }
-.nk-card-codes { display: grid; grid-template-columns: 142px minmax(0, 1fr); gap: 18px; align-items: center; padding-top: 18px; }
+.nk-card-codes { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: center; padding-top: 18px; }
 .nk-qr-wrap, .nk-barcode-wrap { min-width: 0; text-align: center; }
 .nk-qr-wrap small, .nk-barcode-wrap small { display: block; margin-top: 7px; color: #7a6c60; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .nk-qr { width: 142px; height: 142px; padding: 7px; border: 1px solid #ddd0bd; border-radius: 13px; background: #fff; display: block; margin: 0 auto; object-fit: contain; }
 .nk-qr-placeholder { background: repeating-linear-gradient(45deg, #f6f0e7 0 8px, #fff 8px 16px); border-style: dashed; }
-.nk-barcode { width: 100%; max-width: 220px; height: 72px; object-fit: contain; padding: 6px; border: 1px solid #ddd0bd; border-radius: 10px; background: #fff; display: block; margin: 0 auto; }
+.nk-barcode { width: 100%; max-width: 360px; height: 112px; object-fit: contain; padding: 8px 12px; border: 1px solid #cdbfae; border-radius: 10px; background: #fff; display: block; margin: 0 auto; image-rendering: crisp-edges; }
 .nk-barcode-placeholder { background: repeating-linear-gradient(90deg, #172235 0 2px, #fff 2px 5px, #172235 5px 6px, #fff 6px 10px); opacity: .16; }
 .nk-card-code { margin: 7px 0 0; color: #334155; text-align: center; font: 700 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; }
 .nk-card-note { text-align: center; color: #6d6258; font-size: 11px; line-height: 1.45; margin: 16px 0 0; }
 .nk-login { width: min(620px, calc(100% - 28px)); margin: 0 auto; padding: 46px 0; }
+.nk-otp-hint { margin: -10px 0 18px; color: #6e5d51; font-size: 13px; }
+.nk-otp-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; }
+.nk-otp-actions form { margin: 0; }
+.nk-text-button { appearance: none; border: 0; padding: 3px 0; color: #0a3a64; background: transparent; font: inherit; font-size: 13px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.nk-text-button:hover { color: #9a6b22; }
 .nk-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 22px 0; }
 .nk-stat { padding: 18px; border-radius: 16px; background: #f5efe7; }
 .nk-stat strong { display: block; font-size: 25px; margin-top: 4px; }
@@ -112,4 +128,4 @@ h1 { font: 700 clamp(32px, 6vw, 52px)/1.05 Georgia, serif; margin-bottom: 14px; 
 @media (max-width: 900px) { .nk-ib-hero { grid-template-columns: 1fr; } .nk-ib-form-card { position: static; } }
 @media (max-width: 560px) { .nk-shell { padding-top: 22px; } .nk-form { grid-template-columns: 1fr; } .nk-field { grid-column: 1 / -1; } .nk-panel { padding: 22px; border-radius: 18px; } .nk-card-digital { padding: 19px; } }
 @media (max-width: 560px) { .nk-ib-nav { align-items: flex-start; } .nk-ib-login { margin-top: 8px; } .nk-ib-pitch { padding: 27px 22px; border-radius: 22px; } .nk-ib-pitch h1 { font-size: 40px; } .nk-ib-photo { height: 155px; } }
-@media (max-width: 410px) { .nk-card-codes { grid-template-columns: 1fr; } .nk-qr { width: 156px; height: 156px; } .nk-barcode { max-width: 260px; } }
+@media (max-width: 410px) { .nk-qr { width: 156px; height: 156px; } .nk-barcode { max-width: 320px; height: 104px; } .nk-phone-controls { grid-template-columns: 1fr; } .nk-phone-controls:has(.nk-country-custom) .nk-phone-number { grid-column: 1; grid-row: auto; } }

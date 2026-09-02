@@ -3,6 +3,7 @@ import { Form, Link, useActionData } from "react-router";
 import { NEKUDOT_COMMUNITIES } from "../nekudot-domain";
 import { nekudotMeta } from "../nekudot-meta";
 import stylesheet from "../nekudot-public.css?url";
+import { NekudotPhoneField } from "../nekudot-phone-field";
 import { registerPublicBroker, RegistrationError } from "../nekudot-registration.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: stylesheet }];
@@ -67,7 +68,7 @@ export default function BrokerRegistrationPage() {
           <p className="nk-lead">Tu código vinculará automáticamente a cada cliente que invites.</p>
           <Form method="post" className="nk-form">
             <label className="nk-field full">Nombre completo<input name="displayName" required minLength={2} maxLength={100} autoComplete="name" /></label>
-            <label className="nk-field">Teléfono móvil<input name="phone" required inputMode="tel" autoComplete="tel" placeholder="55 1234 5678" /></label>
+            <NekudotPhoneField />
             <label className="nk-field">Correo electrónico<input name="email" type="email" required autoComplete="email" /></label>
             <label className="nk-field full">Comunidad<select name="community" required defaultValue=""><option value="" disabled>Selecciona tu comunidad</option>{NEKUDOT_COMMUNITIES.map((community) => <option key={community} value={community}>{community}</option>)}</select></label>
             <label className="nk-field full">Código de referido<input name="code" required minLength={2} maxLength={40} autoCapitalize="characters" autoComplete="off" placeholder="Ej. DAVID-01" /><small>Será tu identificador público y el código que usarán tus clientes Blue al registrarse.</small></label>
