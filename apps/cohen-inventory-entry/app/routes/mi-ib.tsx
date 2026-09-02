@@ -2,10 +2,19 @@ import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunctio
 import { Form, Link, redirect, useActionData, useLoaderData } from "react-router";
 import stylesheet from "../nekudot-public.css?url";
 import { NekudotPhoneField } from "../nekudot-phone-field";
+import { NEKUDOT_ORIGIN, nekudotMeta } from "../nekudot-meta";
 import { brokerDashboard, logoutBrokerPortal, portalBroker, RegistrationError, sendBrokerOtp, verifyBrokerOtp } from "../nekudot-registration.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: stylesheet }];
-export const meta: MetaFunction = () => [{ title: "Portal de IB · Cohen's" }];
+export const meta: MetaFunction = () => [
+  ...nekudotMeta(
+    "Portal de IB · Cohen's",
+    "Consulta tus referidos, comisiones y actividad como IB de Cohen's.",
+    "/og-nekudot-ib.png",
+    "Portal de IB de Cohen's: referidos y comisiones",
+  ),
+  { property: "og:url", content: `${NEKUDOT_ORIGIN}/mi-ib` },
+];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const broker = await portalBroker(request);
