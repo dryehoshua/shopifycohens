@@ -10,7 +10,7 @@ export const meta: MetaFunction = () => [
   ...nekudotMeta(
     "Portal de IB · Cohen's",
     "Consulta tus referidos, comisiones y actividad como IB de Cohen's.",
-    "/og-nekudot-ib.png",
+    "/og-portal-ib.png",
     "Portal de IB de Cohen's: referidos y comisiones",
   ),
   { property: "og:url", content: `${NEKUDOT_ORIGIN}/mi-ib` },
