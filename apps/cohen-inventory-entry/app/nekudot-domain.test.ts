@@ -9,6 +9,7 @@ import {
   GOLDEN_CASHBACK_BASIS_POINTS,
   normalizeNekudotCredential,
   normalizeNekudotCardTier,
+  normalizeNekudotCommunity,
   normalizeBrokerCode,
   parseNekudotMoney,
   safeNekudotOperationKey,
@@ -44,6 +45,12 @@ test("normaliza tarjetas y valida operaciones", () => {
   assert.throws(() => normalizeNekudotCardTier("BLACK"));
   assert.equal(parseNekudotMoney("125.50"), 12_550);
   assert.equal(safeNekudotOperationKey("nekudot:123456789"), "nekudot:123456789");
+});
+
+test("acepta únicamente las siete comunidades de registro", () => {
+  assert.equal(normalizeNekudotCommunity("Maguen David"), "Maguen David");
+  assert.equal(normalizeNekudotCommunity(" Comunidad Sefaradí "), "Comunidad Sefaradí");
+  assert.throws(() => normalizeNekudotCommunity("Otra comunidad"));
 });
 
 test("restituye el canje proporcionalmente en una devolución", () => {

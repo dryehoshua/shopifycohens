@@ -1,11 +1,11 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import QRCode from "qrcode";
 import bwipjs from "bwip-js";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
-import { NEKUDOT_PROGRAM_KEY, type NekudotCardTier } from "./nekudot-domain";
+import { NEKUDOT_PROGRAM_KEY, normalizeNekudotCommunity, type NekudotCardTier } from "./nekudot-domain";
 import { unauthenticated } from "./shopify.server";
 
 export type RegistrationKind = "plata" | "blue" | "golden" | "vales";
@@ -69,6 +69,14 @@ function cleanText(value: unknown, label: string, max = 100) {
   return result;
 }
 
+function registrationCommunity(value: unknown) {
+  try {
+    return normalizeNekudotCommunity(value);
+  } catch {
+    throw new RegistrationError("Selecciona una de las siete comunidades disponibles.");
+  }
+}
+
 function registrationShop() {
   const shop = (process.env.NEKUDOT_REGISTRATION_SHOP || process.env.RETAIL_SHOP_DOMAIN || process.env.COHENS_SOURCE_SHOP || "").trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
@@ -91,6 +99,45 @@ function secureEquals(left: string, right: string) {
 
 function qrCredential(memberId: string) {
   return `NKD1-${createHmac("sha256", hmacSecret()).update(`qr:${memberId}`).digest("base64url").slice(0, 32)}`;
+}
+
+function registrationClaim() {
+  const memberId = randomUUID();
+  const signature = createHmac("sha256", hmacSecret())
+    .update(`registration:${memberId}`)
+    .digest("base64url")
+    .slice(0, 20);
+  return `${memberId}.${signature}`;
+}
+
+function registrationIdFromClaim(value: unknown) {
+  const claim = String(value || "").trim();
+  const match = /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.([A-Za-z0-9_-]{20})$/i.exec(claim);
+  if (!match) throw new RegistrationError("La tarjeta preliminar expiró. Actualiza la página e inténtalo de nuevo.", 409);
+  const expected = createHmac("sha256", hmacSecret())
+    .update(`registration:${match[1]}`)
+    .digest("base64url")
+    .slice(0, 20);
+  if (!secureEquals(match[2], expected)) throw new RegistrationError("La tarjeta preliminar no es válida. Actualiza la página.", 409);
+  return match[1];
+}
+
+function publicCardNumber(memberId: string) {
+  const value = createHash("sha256").update(`nekudot-card:${memberId}`).digest("hex").slice(0, 16).toUpperCase();
+  return `NK-${value.match(/.{1,4}/g)!.join("-")}`;
+}
+
+export async function registrationCardPreview(kindValue: unknown) {
+  registrationKind(kindValue);
+  const claim = registrationClaim();
+  const memberId = claim.slice(0, 36);
+  const rawQr = qrCredential(memberId);
+  return {
+    claim,
+    qrDataUrl: await QRCode.toDataURL(rawQr, { width: 360, margin: 2, errorCorrectionLevel: "M" }),
+    barcodeDataUrl: await barcodeDataUrl(memberId),
+    cardNumber: publicCardNumber(memberId),
+  };
 }
 
 async function barcodeDataUrl(memberId: string) {
@@ -187,12 +234,13 @@ async function setCustomerTags(admin: AdminApiContext, customerId: string, tag: 
 export async function registerNekudot(formData: FormData, kindValue: unknown) {
   const kind = registrationKind(kindValue);
   const option = REGISTRATION_OPTIONS[kind];
+  const registrationId = registrationIdFromClaim(formData.get("registrationClaim"));
   if (kind === "golden") goldenPaymentConfiguration();
   if (String(formData.get("website") || "")) throw new RegistrationError("No se pudo procesar el registro.");
   const broker = kind === "blue" ? await brokerForInviteCode(formData.get("ibCode")) : null;
   const firstName = cleanText(formData.get("firstName"), "tu nombre", 60);
   const lastName = cleanText(formData.get("lastName"), "tus apellidos", 80);
-  const community = cleanText(formData.get("community"), "tu comunidad", 100);
+  const community = registrationCommunity(formData.get("community"));
   const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
   const phone = normalizeMexicanPhone(formData.get("phone"));
@@ -212,7 +260,7 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
   else await setCustomerTags(admin, customer.id, option.tag);
 
   const displayName = `${firstName} ${lastName}`;
-  const member = await db.$transaction(async (transaction) => {
+  const registration = await db.$transaction(async (transaction) => {
     const identity = await transaction.nekudotCustomerIdentity.findUnique({
       where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customer!.id } },
     });
@@ -223,7 +271,7 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
         data: { displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", ...(broker ? { brokerId: broker.id } : {}) },
       })
       : await transaction.nekudotMember.create({
-        data: { programKey: NEKUDOT_PROGRAM_KEY, displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },
+        data: { id: registrationId, programKey: NEKUDOT_PROGRAM_KEY, displayName, email, phone, community, cardTier: option.tier, enrollmentStatus: option.status, active: option.status === "ACTIVE", brokerId: broker?.id || null },
       });
     await transaction.nekudotCustomerIdentity.upsert({
       where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customer!.id } },
@@ -244,8 +292,9 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
       create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: saved.id, tokenHash: credentialHash(rawQr), lastFour: rawQr.slice(-4), kind: "QR", label: "QR digital" },
       update: { memberId: saved.id, active: true, revokedAt: null, revokedReason: null, label: "QR digital" },
     });
-    return saved;
+    return { member: saved, rawQr };
   });
+  const { member, rawQr } = registration;
   const photoFileName = await savePhoto(member.id, formData.get("photo"));
   if (photoFileName) await db.nekudotMember.update({ where: { id: member.id }, data: { photoFileName } });
   const checkoutUrl = kind === "golden" ? await createGoldenPayment(member.id, displayName, email) : null;
@@ -257,9 +306,10 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
     cardTitle: option.title,
     ibName: broker?.displayName || null,
     checkoutUrl,
-    qrDataUrl: await QRCode.toDataURL(qrCredential(member.id), { width: 360, margin: 2, errorCorrectionLevel: "M" }),
+    qrDataUrl: await QRCode.toDataURL(rawQr, { width: 360, margin: 2, errorCorrectionLevel: "M" }),
     barcodeDataUrl: await barcodeDataUrl(member.id),
-    credentialLastFour: qrCredential(member.id).slice(-4),
+    credentialLastFour: rawQr.slice(-4),
+    cardNumber: publicCardNumber(member.id),
   };
 }
 
@@ -661,6 +711,7 @@ export async function memberCardData(memberId: string) {
     qrDataUrl: await QRCode.toDataURL(qrCredential(member.id), { width: 360, margin: 2, errorCorrectionLevel: "M" }),
     barcodeDataUrl: await barcodeDataUrl(member.id),
     credentialLastFour: qrCredential(member.id).slice(-4),
+    cardNumber: publicCardNumber(member.id),
   };
 }
 

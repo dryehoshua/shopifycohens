@@ -4,6 +4,25 @@ export const BLUE_CASHBACK_BASIS_POINTS = 500;
 export const GOLDEN_CASHBACK_BASIS_POINTS = 800;
 export const BROKER_COMMISSION_BASIS_POINTS = 500;
 
+export const NEKUDOT_COMMUNITIES = [
+  "Kehila Ashkenazi",
+  "Maguen David",
+  "Monte Sinai",
+  "Comunidad Sefaradí",
+  "Comunidad Bet El",
+  "Beth Israel Community Center",
+  "Jabad Lubavitch",
+] as const;
+export type NekudotCommunity = typeof NEKUDOT_COMMUNITIES[number];
+
+export function normalizeNekudotCommunity(value: unknown): NekudotCommunity {
+  const community = String(value ?? "").normalize("NFKC").trim();
+  if (!NEKUDOT_COMMUNITIES.includes(community as NekudotCommunity)) {
+    throw new Error("Selecciona una de las comunidades disponibles.");
+  }
+  return community as NekudotCommunity;
+}
+
 export const NEKUDOT_CARD_TIERS = ["SILVER", "BLUE", "GOLDEN", "VOUCHER"] as const;
 export type NekudotCardTier = typeof NEKUDOT_CARD_TIERS[number];
 
