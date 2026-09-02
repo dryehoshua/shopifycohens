@@ -82,18 +82,25 @@ function profitHref({
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
-  const sourceShop = process.env.COHENS_SOURCE_SHOP?.trim();
-  if (!sourceShop) {
-    throw new Response(
-      "Falta configurar COHENS_SOURCE_SHOP para el módulo de utilidad.",
-      { status: 500 },
-    );
-  }
+  // La tienda autenticada es la única fuente válida para este tablero. Así una
+  // instalación abierta desde cafetería nunca puede consultar resultados de
+  // retail (ni viceversa), aunque ambas compartan backend y base de datos.
+  const sourceShop = session.shop.trim().toLowerCase();
+  const configuredSourceShop = process.env.COHENS_SOURCE_SHOP
+    ?.trim()
+    .toLowerCase();
+  const cafeShop = process.env.CAFE_SHOP_DOMAIN?.trim().toLowerCase();
+  const retailShop = process.env.RETAIL_SHOP_DOMAIN?.trim().toLowerCase();
   const sourceShopName =
-    process.env.COHENS_SOURCE_SHOP_NAME?.trim() || "Tienda fuente";
-  const adminAppUrl = process.env.SHOPIFY_ADMIN_APP_URL?.trim() || "";
+    sourceShop === cafeShop
+      ? "Cohen's Cafe"
+      : sourceShop === retailShop
+        ? "Tienda"
+        : sourceShop === configuredSourceShop
+          ? process.env.COHENS_SOURCE_SHOP_NAME?.trim() || sourceShop
+          : sourceShop;
   const url = new URL(request.url);
   const requestedPeriod = url.searchParams.get("period") ?? "30d";
   const quickPeriod = PERIODS.has(requestedPeriod) ? requestedPeriod : "30d";
@@ -338,9 +345,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     sourceShop,
     sourceShopName,
-    analyticsActionUrl: adminAppUrl
-      ? `${adminAppUrl.replace(/\/$/, "")}/app/profit`
-      : "/app/profit",
+    // Mantener filtros y navegación dentro de la instalación actual evita
+    // saltar a una URL de administrador configurada para otra tienda.
+    analyticsActionUrl: "/app/profit",
     period,
     dateFrom,
     dateTo,
