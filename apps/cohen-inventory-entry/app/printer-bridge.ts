@@ -45,7 +45,7 @@ async function printerBridgeFetch(path: string, init?: RequestInit, timeoutMs = 
 }
 
 export async function getLocalPrinterHealth() {
-  const response = await printerBridgeFetch("/printer/health");
+  const response = await printerBridgeFetch("/printer/health", undefined, 15_000);
   const body = await response.json() as LocalPrinterHealth;
   if (!response.ok) throw new Error(body.error || "No se pudo consultar la impresora local.");
   return body;
