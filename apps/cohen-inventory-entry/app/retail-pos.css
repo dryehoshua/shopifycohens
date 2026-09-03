@@ -119,7 +119,36 @@ button { touch-action: manipulation; }
 .retail-adjustments label { display: grid; gap: 5px; color: #66746e; font-size: 10px; font-weight: 800; }
 .retail-adjustments input { min-width: 0; width: 100%; border: 1px solid #ccd4cf; border-radius: 8px; padding: 9px; }
 .retail-adjustments label > div { display: grid; grid-template-columns: 1fr auto; gap: 5px; }
-.retail-adjustments button { border: 0; border-radius: 8px; color: #245f49; background: #e3eee9; font-size: 10px; font-weight: 900; }
+.retail-adjustments button { min-width: 52px; border: 0; border-radius: 8px; padding: 0 10px; color: #245f49; background: #e3eee9; font-size: 10px; font-weight: 900; cursor: pointer; }
+.retail-adjustments button.active { color: white; background: #237153; }
+.retail-adjustments button:disabled { color: #8c9993; background: #edf0ee; cursor: not-allowed; }
+.retail-nekudot-payment > small { min-height: 13px; color: #237153; font-size: 9px; font-weight: 700; }
+.retail-printer-diagnostic { display: grid; gap: 16px; margin-top: 12px; }
+.retail-printer-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px; border-radius: 16px; color: white; background: linear-gradient(135deg, #173f32, #287353); }
+.retail-printer-hero h2 { margin: 5px 0 7px; font: 500 25px Georgia, serif; }
+.retail-printer-hero p { margin: 0; color: #dcebe3; font-size: 12px; line-height: 1.5; }
+.retail-printer-state { flex: 0 0 auto; border-radius: 999px; padding: 7px 9px; color: #754c08; background: #ffe5a9; font-size: 9px; font-weight: 900; letter-spacing: .08em; }
+.retail-printer-state.ready, .retail-printer-state.printed { color: #15553a; background: #ccf1dd; }
+.retail-printer-checks { display: grid; gap: 8px; }
+.retail-printer-checks article { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid #e0e5e1; border-radius: 12px; background: #fafbfa; }
+.retail-printer-checks article > b { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 50%; color: #8a7447; background: #eee7d7; }
+.retail-printer-checks article.pass > b { color: white; background: #2b8a62; }
+.retail-printer-checks article span { display: grid; gap: 2px; }
+.retail-printer-checks article small { color: #6d7a73; font-size: 10px; }
+.retail-printer-checks article em { color: #8a7447; font-size: 9px; font-style: normal; font-weight: 900; text-transform: uppercase; }
+.retail-printer-checks article.pass em { color: #237153; }
+.retail-printer-message { padding: 11px 12px; border-radius: 9px; color: #74591d; background: #fff4d5; font-size: 11px; font-weight: 700; }
+.retail-printer-message.ready, .retail-printer-message.printed { color: #205f45; background: #e2f4ea; }
+.retail-printer-message.error, .retail-printer-message.bridge-missing { color: #8a3f38; background: #f9e6e2; }
+.retail-printer-driver { padding: 15px; border: 1px solid #eccd86; border-radius: 12px; background: #fff9e9; }
+.retail-printer-driver strong { color: #6f5012; }
+.retail-printer-driver p { margin: 5px 0 12px; color: #796543; font-size: 11px; line-height: 1.5; }
+.retail-printer-driver a { display: inline-flex; border-radius: 8px; padding: 9px 11px; color: white; background: #23684e; font-size: 10px; font-weight: 900; text-decoration: none; }
+.retail-printer-actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; }
+.retail-printer-actions button { min-height: 44px; border: 1px solid #bcc9c1; border-radius: 10px; color: #315e4b; background: white; font-size: 11px; font-weight: 900; cursor: pointer; }
+.retail-printer-actions button.primary { border-color: #237153; color: white; background: #237153; }
+.retail-printer-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.retail-printer-note { color: #758078; font-size: 9px; line-height: 1.45; }
 .retail-totals { display: grid; gap: 6px; margin: 15px 0; }
 .retail-totals > div { display: flex; justify-content: space-between; }
 .retail-totals .deduction { color: #267152; }

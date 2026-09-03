@@ -7,7 +7,7 @@ $ProgressPreference = "SilentlyContinue"
 $BaseUrl = "https://cohens-operations-production.up.railway.app"
 $NodeReleaseUrl = "https://nodejs.org/download/release/latest-v22.x"
 $ReaderSourceSha256 = "515235EC761C6A06C54429B87CF602D2DD0CF61D7536EB4E332284EE80F4594A"
-$BridgeScriptSha256 = "B2A511E842F801A6E84DFD1395431AF97D2DED734FF7CB07A5C9A806744561A6"
+$BridgeScriptSha256 = "407DB96FC29B7224050D08F502EFB0A59DBEBFFE6395A819D35F826AF9D2E84C"
 $LauncherScriptSha256 = "06F3E4E5C4DBC15DC38DA3B92D7A7344FB06C93A1B157C0B37768994F09B52D9"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "Cohens\NFC"
 $BinDirectory = Join-Path $AppDirectory "bin"
@@ -156,7 +156,7 @@ try {
     Write-Host ("Revisa el registro: {0}" -f (Join-Path $LogDirectory "bridge-error.log")) -ForegroundColor Yellow
   }
 
-  Set-Content -LiteralPath (Join-Path $AppDirectory "installed-version.txt") -Value "1.1.0" -Encoding ASCII
+  Set-Content -LiteralPath (Join-Path $AppDirectory "installed-version.txt") -Value "1.2.0" -Encoding ASCII
   Start-Process "$BaseUrl/retail-pos"
   Write-Host ""
   Write-Host "Instalación terminada. Abre Lector NFC y realiza tres lecturas de prueba." -ForegroundColor Green

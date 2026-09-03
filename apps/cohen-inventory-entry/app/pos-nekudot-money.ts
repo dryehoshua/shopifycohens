@@ -10,3 +10,10 @@ export function parseOptionalNekudotMoney(value: unknown) {
   if (!normalized || /^0+(?:\.0{1,2})?$/.test(normalized)) return 0;
   return parseNekudotMoney(normalized);
 }
+
+export function maximumNekudotRedemptionCents(totalCents: number, availableCents: number) {
+  return Math.max(0, Math.min(
+    Number.isFinite(totalCents) ? Math.trunc(totalCents) : 0,
+    Number.isFinite(availableCents) ? Math.trunc(availableCents) : 0,
+  ));
+}

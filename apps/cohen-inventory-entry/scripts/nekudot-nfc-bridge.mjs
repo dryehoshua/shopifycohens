@@ -63,6 +63,146 @@ if ($description -notmatch "(?i)(esperando lectura|escanea|rfid|qr|nekudot|entra
 Write-Output "typed"
 `;
 
+const windowsPrinterHealthScript = String.raw`
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+$portDescriptions = @{}
+Get-PrinterPort -ErrorAction SilentlyContinue | ForEach-Object { $portDescriptions[$_.Name] = [string]$_.Description }
+$candidates = @(Get-Printer -ErrorAction Stop | ForEach-Object {
+  $description = [string]$portDescriptions[$_.PortName]
+  $identity = @($_.Name, $_.DriverName, $_.PortName, $description) -join " "
+  if ($identity -match "(?i)(star|tsp100|tsp143)") {
+    [pscustomobject]@{
+      name = [string]$_.Name
+      driverName = [string]$_.DriverName
+      portName = [string]$_.PortName
+      portDescription = $description
+      status = [string]$_.PrinterStatus
+      driverReady = ([string]$_.DriverName -notmatch "(?i)^Generic / Text Only$") -and (@($_.Name, $_.DriverName) -join " " -match "(?i)(star|tsp100|tsp143)")
+    }
+  }
+})
+$printer = $candidates | Sort-Object @{ Expression = { if ($_.driverReady) { 0 } else { 1 } } }, name | Select-Object -First 1
+[pscustomobject]@{
+  ok = $true
+  platform = "win32"
+  hardwareDetected = [bool]$printer
+  driverReady = [bool]($printer -and $printer.driverReady)
+  printer = $printer
+  error = $null
+} | ConvertTo-Json -Depth 4 -Compress
+`;
+
+const windowsPrinterPrintScript = String.raw`
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+try {
+Add-Type -AssemblyName System.Drawing
+$payloadText = [Console]::In.ReadToEnd()
+$payload = $payloadText | ConvertFrom-Json
+if (-not $payload -or -not $payload.lines -or @($payload.lines).Count -eq 0) { throw "El ticket no contiene líneas para imprimir." }
+
+$portDescriptions = @{}
+Get-PrinterPort -ErrorAction SilentlyContinue | ForEach-Object { $portDescriptions[$_.Name] = [string]$_.Description }
+$printer = Get-Printer -ErrorAction Stop | Where-Object {
+  $description = [string]$portDescriptions[$_.PortName]
+  $identity = @($_.Name, $_.DriverName, $_.PortName, $description) -join " "
+  $driverReady = ([string]$_.DriverName -notmatch "(?i)^Generic / Text Only$") -and (@($_.Name, $_.DriverName) -join " " -match "(?i)(star|tsp100|tsp143)")
+  $identity -match "(?i)(star|tsp100|tsp143)" -and $driverReady
+} | Select-Object -First 1
+if (-not $printer) { throw "Falta instalar el controlador Star TSP100 futurePRNT en Windows." }
+
+$document = New-Object System.Drawing.Printing.PrintDocument
+$document.PrinterSettings.PrinterName = [string]$printer.Name
+if (-not $document.PrinterSettings.IsValid) { throw "La cola Star no está disponible en Windows." }
+$document.DocumentName = if ($payload.title) { [string]$payload.title } else { "COHENS - TICKET" }
+$document.PrintController = New-Object System.Drawing.Printing.StandardPrintController
+$document.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(6, 6, 6, 6)
+$height = [Math]::Max(700, 100 + (@($payload.lines).Count * 34))
+$document.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize("Cohens Receipt", 315, $height)
+
+$handler = [System.Drawing.Printing.PrintPageEventHandler]{
+  param($sender, $eventArgs)
+  $bounds = $eventArgs.MarginBounds
+  $y = [single]$bounds.Top
+  $brush = [System.Drawing.Brushes]::Black
+  foreach ($line in @($payload.lines)) {
+    $fontSize = if ($line.size) { [single][Math]::Max(7, [Math]::Min(18, [double]$line.size)) } else { [single]9 }
+    $fontStyle = if ($line.bold) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
+    $font = New-Object System.Drawing.Font("Consolas", $fontSize, $fontStyle, [System.Drawing.GraphicsUnit]::Point)
+    $format = New-Object System.Drawing.StringFormat
+    $format.Alignment = if ($line.align -eq "center") { [System.Drawing.StringAlignment]::Center } elseif ($line.align -eq "right") { [System.Drawing.StringAlignment]::Far } else { [System.Drawing.StringAlignment]::Near }
+    $lineHeight = [single]([Math]::Ceiling($font.GetHeight($eventArgs.Graphics)) + 2)
+    $rectangle = New-Object System.Drawing.RectangleF([single]$bounds.Left, $y, [single]$bounds.Width, $lineHeight)
+    $eventArgs.Graphics.DrawString([string]$line.text, $font, $brush, $rectangle, $format)
+    $extraSpace = if ($line.spaceAfter) { [double]$line.spaceAfter } else { 0 }
+    $y += $lineHeight + [single]$extraSpace
+    $format.Dispose()
+    $font.Dispose()
+  }
+  $eventArgs.HasMorePages = $false
+}
+$document.add_PrintPage($handler)
+try { $document.Print() } finally { $document.remove_PrintPage($handler); $document.Dispose() }
+[pscustomobject]@{
+  ok = $true
+  job = [string]$payload.title
+  printer = [pscustomobject]@{
+    name = [string]$printer.Name
+    driverName = [string]$printer.DriverName
+    portName = [string]$printer.PortName
+    portDescription = [string]$portDescriptions[$printer.PortName]
+    status = [string]$printer.PrinterStatus
+  }
+} | ConvertTo-Json -Depth 4 -Compress
+} catch {
+  [pscustomobject]@{ ok = $false; error = [string]$_.Exception.Message } | ConvertTo-Json -Compress
+}
+`;
+
+function runWindowsPowerShell(script, input = "") {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const encodedCommand = Buffer.from(script, "utf16le").toString("base64");
+    const child = spawn("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedCommand,
+    ], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 15_000);
+    timeout.unref();
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => { clearTimeout(timeout); rejectPromise(error); });
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolvePromise(stdout.trim());
+      else rejectPromise(new Error(stderr.trim() || stdout.trim() || `PowerShell terminó con código ${code}.`));
+    });
+    child.stdin.end(input);
+  });
+}
+
+function readJsonBody(request, maximumBytes = 64 * 1024) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (Buffer.byteLength(body, "utf8") > maximumBytes) {
+        rejectPromise(new Error("El ticket excede el tamaño permitido."));
+        request.destroy();
+      }
+    });
+    request.on("end", () => {
+      try { resolvePromise(JSON.parse(body || "{}")); }
+      catch { rejectPromise(new Error("El ticket enviado no es JSON válido.")); }
+    });
+    request.on("error", rejectPromise);
+  });
+}
+
 function typeIntoFocusedNekudotField(credential) {
   if (!keyboardFallbackEnabled || Date.now() - lastEventPollAt < 1_500) return;
   if (process.platform !== "darwin" && process.platform !== "win32") return;
@@ -106,7 +246,7 @@ function cors(request, response) {
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
   }
-  response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
   response.setHeader("Access-Control-Allow-Private-Network", "true");
   response.setHeader("Cache-Control", "no-store");
@@ -208,7 +348,7 @@ function startReader() {
   });
 }
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   const origin = request.headers.origin;
   if (!isAllowedOrigin(origin)) {
     json(request, response, 403, { ok: false, error: "Origen no autorizado para usar el lector NFC." });
@@ -251,6 +391,34 @@ const server = createServer((request, response) => {
       cors(request, response);
       response.writeHead(204);
       response.end();
+    }
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/printer/health") {
+    if (process.platform !== "win32") {
+      json(request, response, 200, { ok: true, platform: process.platform, hardwareDetected: false, driverReady: false, printer: null, error: "La impresión local está preparada para Windows." });
+      return;
+    }
+    try {
+      const output = await runWindowsPowerShell(windowsPrinterHealthScript);
+      json(request, response, 200, JSON.parse(output));
+    } catch (error) {
+      json(request, response, 500, { ok: false, platform: process.platform, hardwareDetected: false, driverReady: false, printer: null, error: error instanceof Error ? error.message : "No se pudo consultar la impresora." });
+    }
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/printer/print") {
+    if (process.platform !== "win32") {
+      json(request, response, 501, { ok: false, error: "La impresión local está preparada para Windows." });
+      return;
+    }
+    try {
+      const document = await readJsonBody(request);
+      const output = await runWindowsPowerShell(windowsPrinterPrintScript, JSON.stringify(document));
+      const result = JSON.parse(output);
+      json(request, response, result.ok ? 200 : 409, result);
+    } catch (error) {
+      json(request, response, 500, { ok: false, error: error instanceof Error ? error.message : "No se pudo imprimir el ticket." });
     }
     return;
   }

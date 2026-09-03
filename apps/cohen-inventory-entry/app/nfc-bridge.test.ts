@@ -82,5 +82,8 @@ test("el instalador Windows verifica exactamente el PowerShell publicado", () =>
   assert.match(launcherScript.toString("utf8"), /CohensNekudotNfcWatchdog/);
   assert.match(launcherScript.toString("utf8"), /while \(\$true\)/);
   assert.match(launcherScript.toString("utf8"), /se reiniciará/);
+  assert.match(bridgeScript.toString("utf8"), /\/printer\/health/);
+  assert.match(bridgeScript.toString("utf8"), /\/printer\/print/);
+  assert.match(bridgeScript.toString("utf8"), /Generic \/ Text Only/);
   assert.match(command, /Get-FileHash -Algorithm SHA256/);
 });
