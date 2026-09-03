@@ -1,0 +1,57 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "Mis Nekudot"
+uid = "6c196199-f154-4c6c-a905-bc065c9d938d"
+handle = "nekudot-account"
+description = "Saldo, cashback, tarjeta e historial Nekudot en la cuenta del cliente"
+
+[[extensions.targeting]]
+module = "./src/AccountPage.jsx"
+target = "customer-account.page.render"
+
+[extensions.capabilities]
+network_access = true
+
+[extensions.settings]
+
+[[extensions.settings.fields]]
+key = "backend_url"
+type = "single_line_text_field"
+name = "URL del backend Nekudot"
+description = "Déjalo vacío para usar el servidor de producción de Cohen's."
+
+[[extensions]]
+type = "ui_extension"
+name = "Nekudot en compras"
+uid = "98f523df-c34c-4277-a58f-95ae7e5a47a9"
+handle = "nekudot-account-blocks"
+description = "Cashback Nekudot en perfil, pedidos, compra y agradecimiento"
+
+[[extensions.targeting]]
+module = "./src/ProfileBlock.jsx"
+target = "customer-account.profile.block.render"
+
+[[extensions.targeting]]
+module = "./src/OrderStatusBlock.jsx"
+target = "customer-account.order-status.block.render"
+
+[[extensions.targeting]]
+module = "./src/CheckoutBlock.jsx"
+target = "purchase.checkout.block.render"
+
+[[extensions.targeting]]
+module = "./src/ThankYouBlock.jsx"
+target = "purchase.thank-you.block.render"
+
+[extensions.capabilities]
+network_access = true
+
+[extensions.settings]
+
+[[extensions.settings.fields]]
+key = "backend_url"
+type = "single_line_text_field"
+name = "URL del backend Nekudot"
+description = "Déjalo vacío para usar el servidor de producción de Cohen's."

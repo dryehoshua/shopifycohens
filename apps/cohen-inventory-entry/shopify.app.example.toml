@@ -25,7 +25,7 @@ api_version = "2026-07"
 
   [[webhooks.subscriptions]]
   uri = "/webhooks/sales-sync"
-  topics = [ "orders/create", "orders/updated", "refunds/create" ]
+  topics = [ "orders/create", "orders/paid", "orders/updated", "orders/cancelled", "refunds/create" ]
 
 [auth]
 redirect_urls = [

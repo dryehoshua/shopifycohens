@@ -59,9 +59,10 @@ export default function BrokerRegistrationPage() {
           <p>Tu perfil IB ya está listo. Comparte este código o el enlace directo con tus referidos:</p>
           <div className="nk-ib-result"><small>Tu código de referido</small><strong>{result.code}</strong></div>
           <div className="nk-ib-success-actions">
-            <Link className="nk-button" to={result.referralPath}>Abrir enlace para referidos</Link>
+            <Link className="nk-button" to={result.referralPath}>Activar mi tarjeta Blue personal</Link>
             <Link className="nk-button secondary" to="/mi-ib">Entrar a mi portal IB</Link>
           </div>
+          <p className="nk-ib-own-note">Al activar tu propia Blue recibirás 5% en Nekudot personales y 5% en tu wallet IB. Los dos saldos permanecen separados.</p>
         </div> : <>
           <p className="nk-eyebrow">ALTA GRATUITA</p>
           <h2>Crea tu perfil IB</h2>
@@ -81,6 +82,6 @@ export default function BrokerRegistrationPage() {
       </aside>
     </section>
 
-    <p className="nk-ib-disclaimer">Las comisiones corresponden únicamente a compras elegibles de clientes Blue vinculados a tu código. El cliente recibe 5% de cashback y su IB recibe otro 5%; pueden existir ajustes por cancelaciones o devoluciones.</p>
+    <p className="nk-ib-disclaimer">Cada compra Blue vinculada genera 5% de cashback personal y 5% de comisión IB en wallets separadas, incluida la compra propia del IB. Pueden existir ajustes por cancelaciones o devoluciones.</p>
   </main>;
 }

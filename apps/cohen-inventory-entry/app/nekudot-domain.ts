@@ -63,6 +63,18 @@ export function nekudotCredentialLastFour(value: unknown) {
   return normalizeNekudotCredential(value).slice(-4);
 }
 
+export const NEKUDOT_CREDENTIAL_KINDS = ["NFC", "QR", "BARCODE", "RFID_OR_QR"] as const;
+export type NekudotCredentialKind = typeof NEKUDOT_CREDENTIAL_KINDS[number];
+
+export function normalizeNekudotCredentialKind(value: unknown): NekudotCredentialKind {
+  const requested = String(value ?? "RFID_OR_QR").trim().toUpperCase();
+  const kind = requested === "RFID" ? "NFC" : requested;
+  if (!NEKUDOT_CREDENTIAL_KINDS.includes(kind as NekudotCredentialKind)) {
+    throw new Error("Selecciona un formato de credencial válido.");
+  }
+  return kind as NekudotCredentialKind;
+}
+
 export function parseNekudotMoney(value: unknown) {
   const normalized = String(value ?? "").trim().replace(",", ".");
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) throw new Error("El importe no es válido.");

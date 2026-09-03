@@ -8,6 +8,7 @@ import {
   calculateRestoredRedemptionCents,
   GOLDEN_CASHBACK_BASIS_POINTS,
   normalizeNekudotCredential,
+  normalizeNekudotCredentialKind,
   normalizeNekudotCardTier,
   normalizeNekudotCommunity,
   normalizeBrokerCode,
@@ -46,6 +47,9 @@ test("normaliza códigos de broker", () => {
 
 test("normaliza tarjetas y valida operaciones", () => {
   assert.equal(normalizeNekudotCredential("aa:bb:01:ff"), "AABB01FF");
+  assert.equal(normalizeNekudotCredentialKind("RFID"), "NFC");
+  assert.equal(normalizeNekudotCredentialKind("barcode"), "BARCODE");
+  assert.throws(() => normalizeNekudotCredentialKind("MAGNETIC"));
   assert.equal(normalizeNekudotCardTier(" blue "), "BLUE");
   assert.equal(cashbackBasisPointsForTier("SILVER"), 200);
   assert.equal(cashbackBasisPointsForTier("GOLDEN"), 800);

@@ -609,13 +609,15 @@ model NekudotMember {
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
-  identities  NekudotCustomerIdentity[]
-  credentials NekudotCredential[]
-  ledger      NekudotLedgerEntry[]
-  accruals    NekudotOrderAccrual[]
-  redemptions NekudotRedemption[]
-  portalSessions NekudotPortalSession[]
+  identities         NekudotCustomerIdentity[]
+  credentials        NekudotCredential[]
+  ledger             NekudotLedgerEntry[]
+  accruals           NekudotOrderAccrual[]
+  redemptions        NekudotRedemption[]
+  portalSessions     NekudotPortalSession[]
   membershipPayments NekudotMembershipPayment[]
+  ownedBroker        NekudotBroker?             @relation("NekudotBrokerOwner")
+  claimedOrders      NekudotPendingClaim[]      @relation("NekudotClaimedMember")
 
   @@index([programKey, active, updatedAt])
   @@index([brokerId, active])
@@ -663,24 +665,26 @@ model NekudotMembershipPayment {
 /// Perfil comercial del broker. La comisión no se mezcla con los Nekudot
 /// canjeables del cliente y puede conciliarse o pagarse por separado.
 model NekudotBroker {
-  id                      String   @id @default(cuid())
-  programKey              String   @default("cohens")
+  id                      String         @id @default(cuid())
+  programKey              String         @default("cohens")
   code                    String
   displayName             String
   email                   String?
   phone                   String?
   community               String?
   referralWord            String?
-  active                  Boolean  @default(true)
-  commissionBalanceCents  Int      @default(0)
-  lifetimeCommissionCents Int      @default(0)
-  paidOutCents            Int      @default(0)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  active                  Boolean        @default(true)
+  commissionBalanceCents  Int            @default(0)
+  lifetimeCommissionCents Int            @default(0)
+  paidOutCents            Int            @default(0)
+  ownerMemberId           String?        @unique
+  ownerMember             NekudotMember? @relation("NekudotBrokerOwner", fields: [ownerMemberId], references: [id], onDelete: SetNull)
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
 
-  clients  NekudotMember[]
-  ledger   NekudotLedgerEntry[]
-  accruals NekudotOrderAccrual[]
+  clients        NekudotMember[]
+  ledger         NekudotLedgerEntry[]
+  accruals       NekudotOrderAccrual[]
   portalSessions NekudotBrokerSession[]
 
   @@unique([programKey, code])
@@ -823,4 +827,56 @@ model NekudotRedemption {
   @@unique([programKey, idempotencyKey])
   @@index([memberId, status, expiresAt])
   @@index([shop, shopifyOrderId])
+}
+
+/// Compra online hecha sin una identidad Nekudot verificable. El contacto se
+/// guarda únicamente como HMAC y sólo se enlaza después de validar un OTP.
+model NekudotPendingClaim {
+  id                      String         @id @default(cuid())
+  programKey              String         @default("cohens")
+  shop                    String
+  shopifyOrderId          String
+  orderName               String
+  currencyCode            String         @default("MXN")
+  purchaseCents           Int
+  eligibleFinancialStatus Boolean        @default(false)
+  cancelled               Boolean        @default(false)
+  orderUpdatedAt          DateTime
+  emailHash               String?
+  phoneHash               String?
+  status                  String         @default("PENDING")
+  claimedMemberId         String?
+  claimedMember           NekudotMember? @relation("NekudotClaimedMember", fields: [claimedMemberId], references: [id], onDelete: SetNull)
+  expiresAt               DateTime
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+  claimedAt               DateTime?
+
+  @@unique([shop, shopifyOrderId])
+  @@index([programKey, status, expiresAt])
+  @@index([phoneHash, status])
+  @@index([emailHash, status])
+  @@index([claimedMemberId, claimedAt])
+}
+
+/// Intento temporal para vincular un registro nuevo con un cliente Shopify ya
+/// existente. La vinculación sólo concluye después de validar el contacto previo.
+model NekudotRegistrationRecovery {
+  id                String    @id @default(cuid())
+  programKey        String    @default("cohens")
+  shop              String
+  shopifyCustomerId String
+  requestedKind     String
+  requestedData     Json
+  destinationPhone  String?
+  maskedPhone       String?
+  maskedEmail       String?
+  status            String    @default("PENDING")
+  expiresAt         DateTime
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  verifiedAt        DateTime?
+
+  @@index([programKey, status, expiresAt])
+  @@index([shop, shopifyCustomerId, status])
 }

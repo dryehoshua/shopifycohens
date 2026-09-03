@@ -10,6 +10,7 @@ import {
   normalizeBrokerCode,
   normalizeNekudotCardTier,
   normalizeNekudotCredential,
+  normalizeNekudotCredentialKind,
   parseNekudotMoney,
   safeNekudotOperationKey,
 } from "./nekudot-domain";
@@ -200,9 +201,8 @@ export async function bindNekudotCredential(input: {
   const customer = await resolveCustomer(input.admin, input.customerId);
   const digest = tokenHash(input.rawToken);
   const lastFour = nekudotCredentialLastFour(input.rawToken);
-  const kind = String(input.kind ?? "RFID_OR_QR");
+  const kind = normalizeNekudotCredentialKind(input.kind);
   const cardTier = normalizeNekudotCardTier(input.cardTier);
-  if (!new Set(["RFID", "QR", "RFID_OR_QR"]).has(kind)) throw new NekudotError("Tipo de credencial no válido.");
   const brokerId = String(input.brokerId ?? "").trim() || null;
   if (brokerId && cardTier !== "BLUE") {
     throw new NekudotError("Los IBs sólo pueden vincularse a tarjetas Blue.");
@@ -577,6 +577,8 @@ type OrderInput = {
   shopifyOrderId: string;
   orderName: string;
   customerId: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
   currencyCode: string;
   eligibleFinancialStatus: boolean;
   cancelled: boolean;
@@ -584,6 +586,25 @@ type OrderInput = {
   purchaseCents: number;
   customAttributes: Array<{ key: string; value: string }>;
 };
+
+function normalizedClaimEmail(value: unknown) {
+  const email = String(value ?? "").normalize("NFKC").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function normalizedClaimPhone(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.length === 10) return `+52${digits}`;
+  if (digits.length >= 11 && digits.length <= 15) return `+${digits}`;
+  return null;
+}
+
+function claimContactHash(kind: "email" | "phone", value: string | null) {
+  if (!value) return null;
+  return createHmac("sha256", secret())
+    .update(`${NEKUDOT_PROGRAM_KEY}:claim:${kind}:${value}`)
+    .digest("hex");
+}
 
 function attribute(attributes: OrderInput["customAttributes"], key: string) {
   return attributes.find((item) => item.key === key)?.value?.trim() || null;
@@ -623,6 +644,8 @@ export async function reconcileNekudotOrder(input: OrderInput) {
     ? existingAccrual!.cashbackBasisPoints
     : cashbackBasisPointsForTier(cashbackTier);
   const target = calculateNekudotPurchase(purchaseCents, Boolean(brokerId), cashbackBasisPoints, cashbackTier);
+  const emailHash = claimContactHash("email", normalizedClaimEmail(input.customerEmail));
+  const phoneHash = claimContactHash("phone", normalizedClaimPhone(input.customerPhone));
   const hash = createHash("sha256").update(JSON.stringify({
     order: input.shopifyOrderId,
     updated: input.orderUpdatedAt.toISOString(),
@@ -750,15 +773,100 @@ export async function reconcileNekudotOrder(input: OrderInput) {
         clientEarnedCents: 0, brokerEarnedCents: 0, calculationHash: hash, processedAt: new Date(),
       } });
     }
-    if (!newOrderMember) return accrual;
+    if (!newOrderMember) {
+      await transaction.nekudotPendingClaim.upsert({
+        where: { shop_shopifyOrderId: { shop: input.shop, shopifyOrderId: input.shopifyOrderId } },
+        create: {
+          programKey: NEKUDOT_PROGRAM_KEY,
+          shop: input.shop,
+          shopifyOrderId: input.shopifyOrderId,
+          orderName: input.orderName,
+          currencyCode: input.currencyCode,
+          purchaseCents,
+          eligibleFinancialStatus: input.eligibleFinancialStatus,
+          cancelled: input.cancelled,
+          orderUpdatedAt: input.orderUpdatedAt,
+          emailHash,
+          phoneHash,
+          status: input.cancelled ? "REVERSED" : "PENDING",
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+        },
+        update: {
+          orderName: input.orderName,
+          currencyCode: input.currencyCode,
+          purchaseCents,
+          eligibleFinancialStatus: input.eligibleFinancialStatus,
+          cancelled: input.cancelled,
+          orderUpdatedAt: input.orderUpdatedAt,
+          emailHash,
+          phoneHash,
+          status: input.cancelled ? "REVERSED" : "PENDING",
+        },
+      });
+      return accrual;
+    }
     await postMember(newOrderMember.id, target.clientEarnedCents - (accrual?.clientEarnedCents ?? 0), "current-member", target.clientEarnedCents >= (accrual?.clientEarnedCents ?? 0) ? `${cashbackBasisPoints / 100}% Nekudot ${cashbackTier} de ${input.orderName}` : `Ajuste por devolución de ${input.orderName}`);
     if (brokerId) await postBroker(brokerId, target.brokerEarnedCents - (accrual?.brokerEarnedCents ?? 0), "current-broker", target.brokerEarnedCents >= (accrual?.brokerEarnedCents ?? 0) ? `Comisión 5% de ${input.orderName}` : `Ajuste de comisión por devolución de ${input.orderName}`);
-    return transaction.nekudotOrderAccrual.upsert({
+    const savedAccrual = await transaction.nekudotOrderAccrual.upsert({
       where: { shop_shopifyOrderId: { shop: input.shop, shopifyOrderId: input.shopifyOrderId } },
       create: { programKey: NEKUDOT_PROGRAM_KEY, shop: input.shop, shopifyOrderId: input.shopifyOrderId, orderName: input.orderName, memberId: newOrderMember.id, brokerId, cashbackTier, cashbackBasisPoints, originalPurchaseCents, purchaseCents: target.purchaseCents, clientEarnedCents: target.clientEarnedCents, brokerEarnedCents: target.brokerEarnedCents, currencyCode: input.currencyCode, calculationHash: hash },
       update: { orderName: input.orderName, memberId: newOrderMember.id, brokerId, cashbackTier, cashbackBasisPoints, originalPurchaseCents, purchaseCents: target.purchaseCents, clientEarnedCents: target.clientEarnedCents, brokerEarnedCents: target.brokerEarnedCents, currencyCode: input.currencyCode, calculationHash: hash, processedAt: new Date() },
     });
+    await transaction.nekudotPendingClaim.updateMany({
+      where: { shop: input.shop, shopifyOrderId: input.shopifyOrderId },
+      data: {
+        status: input.cancelled ? "REVERSED" : "CLAIMED",
+        claimedMemberId: newOrderMember.id,
+        claimedAt: new Date(),
+      },
+    });
+    return savedAccrual;
   });
+}
+
+export async function claimPendingNekudotOrders(input: {
+  memberId: string;
+  phone?: unknown;
+  email?: unknown;
+}) {
+  const phoneHash = claimContactHash("phone", normalizedClaimPhone(input.phone));
+  const emailHash = claimContactHash("email", normalizedClaimEmail(input.email));
+  const contactFilters = [
+    ...(phoneHash ? [{ phoneHash }] : []),
+    ...(emailHash ? [{ emailHash }] : []),
+  ];
+  if (!contactFilters.length) return { claimed: 0 };
+  const member = await db.nekudotMember.findFirst({
+    where: { id: input.memberId, programKey: NEKUDOT_PROGRAM_KEY, active: true },
+  });
+  if (!member) throw new NekudotError("La membresía no está activa.", 404);
+  const claims = await db.nekudotPendingClaim.findMany({
+    where: {
+      programKey: NEKUDOT_PROGRAM_KEY,
+      status: "PENDING",
+      expiresAt: { gt: new Date() },
+      OR: contactFilters,
+    },
+    orderBy: { createdAt: "asc" },
+    take: 50,
+  });
+  let claimed = 0;
+  for (const claim of claims) {
+    await reconcileNekudotOrder({
+      shop: claim.shop,
+      shopifyOrderId: claim.shopifyOrderId,
+      orderName: claim.orderName,
+      customerId: null,
+      currencyCode: claim.currencyCode,
+      eligibleFinancialStatus: claim.eligibleFinancialStatus,
+      cancelled: claim.cancelled,
+      orderUpdatedAt: claim.orderUpdatedAt,
+      purchaseCents: claim.purchaseCents,
+      customAttributes: [{ key: "nekudot_member_id", value: member.id }],
+    });
+    claimed += 1;
+  }
+  return { claimed };
 }
 
 export async function nekudotDashboard() {

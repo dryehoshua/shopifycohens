@@ -121,6 +121,18 @@ importers:
         specifier: ^6.3.6
         version: 6.4.3(@types/node@22.20.1)(jiti@2.7.0)(yaml@2.9.0)
 
+  extensions/nekudot-account:
+    dependencies:
+      '@preact/signals':
+        specifier: ^2.3.x
+        version: 2.10.0(preact@10.29.7)
+      '@shopify/ui-extensions':
+        specifier: 2026.7.x
+        version: 2026.7.0(@preact/signals@2.10.0(preact@10.29.7))(preact@10.29.7)
+      preact:
+        specifier: ^10.10.x
+        version: 10.29.7
+
   extensions/nekudot-pos:
     dependencies:
       '@preact/signals':

@@ -6,6 +6,7 @@ import bwipjs from "bwip-js";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
 import { NEKUDOT_PROGRAM_KEY, normalizeBrokerCode, normalizeNekudotCommunity, type NekudotCardTier } from "./nekudot-domain";
+import { claimPendingNekudotOrders } from "./nekudot.server";
 import { unauthenticated } from "./shopify.server";
 
 export type RegistrationKind = "plata" | "blue" | "golden" | "vales";
@@ -388,6 +389,88 @@ async function findCustomer(admin: AdminApiContext, email: string, phone: string
   ) || null;
 }
 
+async function customerById(admin: AdminApiContext, customerId: string) {
+  if (!/^gid:\/\/shopify\/Customer\/\d+$/.test(customerId)) throw new RegistrationError("El cliente seleccionado no es válido.", 400);
+  const data = await graphql<{ customer: ShopifyCustomer | null }>(admin, `#graphql
+    query NekudotRegistrationCustomerById($id: ID!) {
+      customer(id: $id) {
+        id legacyResourceId displayName
+        defaultEmailAddress { emailAddress }
+        defaultPhoneNumber { phoneNumber }
+      }
+    }
+  `, { id: customerId });
+  if (!data.customer) throw new RegistrationError("La cuenta seleccionada ya no está disponible.", 404);
+  return data.customer;
+}
+
+async function registrationCandidates(admin: AdminApiContext, email: string, phone: string, displayName: string) {
+  const queries = [`email:${JSON.stringify(email)}`, `phone:${JSON.stringify(phone)}`, `name:${JSON.stringify(displayName)}`];
+  const customers = new Map<string, ShopifyCustomer>();
+  for (const query of queries) {
+    const data = await graphql<{ customers: { nodes: ShopifyCustomer[] } }>(admin, `#graphql
+      query NekudotRegistrationCandidates($query: String!) {
+        customers(first: 10, query: $query) {
+          nodes { id legacyResourceId displayName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } }
+        }
+      }
+    `, { query });
+    for (const customer of data.customers.nodes) customers.set(customer.id, customer);
+  }
+  const normalizedName = displayName.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
+  return [...customers.values()].filter((customer) => {
+    const candidateEmail = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase();
+    const candidatePhone = customer.defaultPhoneNumber?.phoneNumber?.replace(/\D/g, "");
+    const candidateName = customer.displayName.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
+    return candidateEmail === email || candidatePhone === phone.replace(/\D/g, "") || candidateName === normalizedName;
+  }).slice(0, 5);
+}
+
+function maskedPhone(value: string | null | undefined) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 4 ? `•••• ${digits.slice(-4)}` : "teléfono no disponible";
+}
+
+function maskedContactEmail(value: string | null | undefined) {
+  const [name, domain] = String(value || "").split("@");
+  if (!name || !domain) return "correo no disponible";
+  return `${name.slice(0, 2)}•••@${domain}`;
+}
+
+async function createRegistrationMatches(input: {
+  shop: string;
+  kind: RegistrationKind;
+  candidates: ShopifyCustomer[];
+  requestedData: Record<string, string>;
+}) {
+  await db.nekudotRegistrationRecovery.updateMany({
+    where: { shop: input.shop, status: { in: ["PENDING", "OTP_SENT"] }, expiresAt: { lt: new Date() } },
+    data: { status: "EXPIRED" },
+  });
+  return Promise.all(input.candidates.map(async (customer) => {
+    const phone = customer.defaultPhoneNumber?.phoneNumber || null;
+    const email = customer.defaultEmailAddress?.emailAddress || null;
+    const recovery = await db.nekudotRegistrationRecovery.create({ data: {
+      programKey: NEKUDOT_PROGRAM_KEY,
+      shop: input.shop,
+      shopifyCustomerId: customer.id,
+      requestedKind: input.kind,
+      requestedData: input.requestedData,
+      destinationPhone: phone,
+      maskedPhone: phone ? maskedPhone(phone) : null,
+      maskedEmail: email ? maskedContactEmail(email) : null,
+      expiresAt: new Date(Date.now() + 15 * 60_000),
+    } });
+    return {
+      token: `shopify:${recovery.id}`,
+      name: maskedName(customer.displayName),
+      phone: phone ? maskedPhone(phone) : "Sin teléfono verificable",
+      email: maskedContactEmail(email),
+      cardTier: "CLIENTE_SHOPIFY",
+    };
+  }));
+}
+
 async function createCustomer(admin: AdminApiContext, input: { firstName: string; lastName: string; email: string; phone: string; tag: string }) {
   const data = await graphql<{
     customerCreate: { customer: ShopifyCustomer | null; userErrors: Array<{ message: string }> };
@@ -433,6 +516,7 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   const phone = phoneFromFormData(formData);
   const displayName = `${firstName} ${lastName}`;
   const ibCode = kind === "blue" ? String(formData.get("ibCode") || "").trim().slice(0, 40) : "";
+  const shop = registrationShop();
 
   const members = await db.nekudotMember.findMany({
     where: {
@@ -444,20 +528,35 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
     orderBy: { updatedAt: "desc" },
     take: 5,
   });
+  const { admin } = await unauthenticated.admin(shop);
+  const shopifyCandidates = await registrationCandidates(admin, email, phone, displayName);
+  const linkedCustomerIds = new Set((await db.nekudotCustomerIdentity.findMany({
+    where: { shop, shopifyCustomerId: { in: shopifyCandidates.map((customer) => customer.id) } },
+    select: { shopifyCustomerId: true },
+  })).map((identity) => identity.shopifyCustomerId));
+  const requestedData = Object.fromEntries(
+    [...formData.entries()].filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  const customerMatches = await createRegistrationMatches({
+    shop,
+    kind,
+    candidates: shopifyCandidates.filter((customer) => Boolean(customer.defaultPhoneNumber?.phoneNumber) && !linkedCustomerIds.has(customer.id)),
+    requestedData,
+  });
 
   return {
     submitted: { firstName, lastName, community, email, phone, ibCode },
-    matches: members.map((member) => ({
+    matches: [...members.map((member) => ({
       token: existingMemberToken(member.id),
       name: maskedName(member.displayName),
       phone: `•••• ${member.phone!.slice(-4)}`,
       email: maskedEmail(member.email),
       cardTier: member.cardTier,
-    })),
+    })), ...customerMatches].slice(0, 8),
   };
 }
 
-export async function registerNekudot(formData: FormData, kindValue: unknown) {
+export async function registerNekudot(formData: FormData, kindValue: unknown, verifiedCustomerId?: string) {
   const kind = registrationKind(kindValue);
   const option = REGISTRATION_OPTIONS[kind];
   const registrationId = registrationIdFromClaim(formData.get("registrationClaim"));
@@ -474,11 +573,13 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
 
   const shop = registrationShop();
   const { admin } = await unauthenticated.admin(shop);
-  let customer = await findCustomer(admin, email, phone);
+  let customer = verifiedCustomerId
+    ? await customerById(admin, verifiedCustomerId)
+    : await findCustomer(admin, email, phone);
   if (customer) {
     const customerEmail = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || "";
     const customerPhone = customer.defaultPhoneNumber?.phoneNumber?.trim() || "";
-    if (customerEmail !== email || customerPhone !== phone) {
+    if (!verifiedCustomerId && (customerEmail !== email || customerPhone !== phone)) {
       throw new RegistrationError("Ya existe un cliente con parte de estos datos. Entra con el teléfono registrado o solicita ayuda para vincular la cuenta.", 409);
     }
     const linkedIdentity = await db.nekudotCustomerIdentity.findUnique({
@@ -520,6 +621,12 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
       create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: saved.id, tokenHash: credentialHash(rawQr), lastFour: rawQr.slice(-4), kind: "QR", label: "QR digital" },
       update: { memberId: saved.id, active: true, revokedAt: null, revokedReason: null, label: "QR digital" },
     });
+    if (broker && (broker.phone === phone || broker.email?.toLowerCase() === email)) {
+      await transaction.nekudotBroker.update({
+        where: { id: broker.id },
+        data: { ownerMemberId: saved.id },
+      });
+    }
     return { member: saved, rawQr };
   });
   const { member, rawQr } = registration;
@@ -540,6 +647,44 @@ export async function registerNekudot(formData: FormData, kindValue: unknown) {
     credentialLastFour: rawQr.slice(-4),
     cardNumber: publicCardNumber(member.id),
   };
+}
+
+export async function sendRegistrationRecoveryOtp(recoveryIdValue: unknown) {
+  const recoveryId = String(recoveryIdValue || "").trim();
+  const recovery = await db.nekudotRegistrationRecovery.findUnique({ where: { id: recoveryId } });
+  if (!recovery || !["PENDING", "OTP_SENT"].includes(recovery.status) || recovery.expiresAt.getTime() <= Date.now()) {
+    throw new RegistrationError("La selección venció. Vuelve a buscar tu cuenta.", 410);
+  }
+  if (!recovery.destinationPhone) throw new RegistrationError("Esta cuenta no tiene un teléfono verificable. Solicita ayuda en tienda.", 409);
+  if (!(process.env.NODE_ENV !== "production" && process.env.NEKUDOT_DEV_OTP)) {
+    await twilioPost("Verifications", new URLSearchParams({ To: recovery.destinationPhone, Channel: "sms", Locale: "es" }));
+  }
+  await db.nekudotRegistrationRecovery.update({ where: { id: recovery.id }, data: { status: "OTP_SENT" } });
+  return { recoveryId: recovery.id, contact: recovery.maskedPhone || "tu teléfono registrado" };
+}
+
+export async function verifyRegistrationRecovery(recoveryIdValue: unknown, codeValue: unknown) {
+  const recoveryId = String(recoveryIdValue || "").trim();
+  const recovery = await db.nekudotRegistrationRecovery.findUnique({ where: { id: recoveryId } });
+  if (!recovery || recovery.status !== "OTP_SENT" || recovery.expiresAt.getTime() <= Date.now() || !recovery.destinationPhone) {
+    throw new RegistrationError("La verificación venció. Inicia el registro nuevamente.", 410);
+  }
+  const code = String(codeValue || "").trim();
+  let approved = process.env.NODE_ENV !== "production" && Boolean(process.env.NEKUDOT_DEV_OTP) && secureEquals(code, process.env.NEKUDOT_DEV_OTP || "");
+  if (!approved) {
+    const result = await twilioPost("VerificationCheck", new URLSearchParams({ To: recovery.destinationPhone, Code: code }));
+    approved = result.status === "approved";
+  }
+  if (!approved) throw new RegistrationError("El código no es correcto o ya venció.", 401);
+  const requestedData = recovery.requestedData as Record<string, unknown>;
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(requestedData)) if (typeof value === "string") formData.set(key, value);
+  const result = await registerNekudot(formData, recovery.requestedKind, recovery.shopifyCustomerId);
+  await db.nekudotRegistrationRecovery.update({ where: { id: recovery.id }, data: { status: "VERIFIED", verifiedAt: new Date() } });
+  const member = await db.nekudotMember.findUnique({ where: { id: result.memberId } });
+  if (!member) throw new RegistrationError("No se pudo abrir la nueva cuenta Nekudot.", 500);
+  await claimPendingNekudotOrders({ memberId: member.id, phone: member.phone, email: member.email });
+  return createMemberPortalSession(member);
 }
 
 function goldenPaymentConfiguration() {
@@ -830,18 +975,29 @@ export async function verifyPortalOtp(phoneValue: unknown, codeValue: unknown) {
   let member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
   if (!member) member = await createSilverMemberForExistingCustomer(phone);
   if (!member) throw new RegistrationError("No encontramos una cuenta Nekudot con ese teléfono.", 404);
+  await claimPendingNekudotOrders({ memberId: member.id, phone, email: member.email });
   return createMemberPortalSession(member);
 }
 
 export async function sendExistingRegistrationOtp(matchToken: unknown) {
+  const token = String(matchToken || "");
+  if (token.startsWith("shopify:")) {
+    const challenge = await sendRegistrationRecoveryOtp(token.slice("shopify:".length));
+    return { matchToken: token, phoneHint: challenge.contact };
+  }
   const member = await memberFromExistingToken(matchToken);
   await sendPhoneOtp(member.phone!);
   return { matchToken: String(matchToken), phoneHint: `•••• ${member.phone!.slice(-4)}` };
 }
 
 export async function verifyExistingRegistrationOtp(matchToken: unknown, codeValue: unknown) {
+  const token = String(matchToken || "");
+  if (token.startsWith("shopify:")) {
+    return verifyRegistrationRecovery(token.slice("shopify:".length), codeValue);
+  }
   const member = await memberFromExistingToken(matchToken);
   await verifyPhoneOtp(member.phone!, codeValue);
+  await claimPendingNekudotOrders({ memberId: member.id, phone: member.phone, email: member.email });
   return createMemberPortalSession(member);
 }
 
@@ -946,6 +1102,16 @@ export async function brokerDashboard(brokerId: string) {
           createdAt: true,
         },
       },
+      ownerMember: {
+        select: {
+          id: true,
+          displayName: true,
+          balanceCents: true,
+          reservedCents: true,
+          lifetimeEarnedCents: true,
+          cardTier: true,
+        },
+      },
       ledger: {
         orderBy: { occurredAt: "desc" },
         take: 20,
@@ -958,15 +1124,26 @@ export async function brokerDashboard(brokerId: string) {
 }
 
 export async function memberCardData(memberId: string) {
-  const member = await db.nekudotMember.findUnique({ where: { id: memberId }, include: { identities: true } });
+  const member = await db.nekudotMember.findUnique({
+    where: { id: memberId },
+    include: { identities: true, broker: true, ownedBroker: true, credentials: { where: { active: true }, orderBy: { createdAt: "asc" } } },
+  });
   if (!member) throw new RegistrationError("No encontramos la cuenta.", 404);
+  const rawQr = qrCredential(member.id);
+  await db.nekudotCredential.upsert({
+    where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: credentialHash(rawQr) } },
+    create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: member.id, tokenHash: credentialHash(rawQr), lastFour: rawQr.slice(-4), kind: "QR", label: "QR digital" },
+    update: { memberId: member.id, active: true, revokedAt: null, revokedReason: null },
+  });
   await ensureBarcodeCredential(member.id);
+  const credentials = await db.nekudotCredential.findMany({ where: { memberId: member.id, active: true }, orderBy: { createdAt: "asc" } });
   return {
     ...member,
+    credentials,
     availableCents: member.balanceCents - member.reservedCents,
-    qrDataUrl: await QRCode.toDataURL(qrCredential(member.id), { width: 360, margin: 2, errorCorrectionLevel: "M" }),
+    qrDataUrl: await QRCode.toDataURL(rawQr, { width: 360, margin: 2, errorCorrectionLevel: "M" }),
     barcodeDataUrl: await barcodeDataUrl(member.id),
-    credentialLastFour: qrCredential(member.id).slice(-4),
+    credentialLastFour: rawQr.slice(-4),
     cardNumber: publicCardNumber(member.id),
   };
 }
@@ -987,7 +1164,20 @@ export async function memberOrders(memberId: string) {
       }
     }
   `, { id: identity.shopifyCustomerId });
-  return data.customer?.orders.nodes || [];
+  const orders = data.customer?.orders.nodes || [];
+  const accruals = await db.nekudotOrderAccrual.findMany({
+    where: { shop: identity.shop, memberId, shopifyOrderId: { in: orders.map((order) => order.id) } },
+  });
+  const byOrder = new Map(accruals.map((accrual) => [accrual.shopifyOrderId, accrual]));
+  return orders.map((order) => {
+    const accrual = byOrder.get(order.id);
+    return {
+      ...order,
+      clientEarnedCents: accrual?.clientEarnedCents ?? 0,
+      brokerEarnedCents: accrual?.brokerEarnedCents ?? 0,
+      cashbackProcessed: Boolean(accrual),
+    };
+  });
 }
 
 export async function readMemberPhoto(fileName: string) {

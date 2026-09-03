@@ -28,6 +28,8 @@ const ORDER_QUERY = `#graphql
       sourceName
       test
       customer { id }
+      email
+      phone
       customAttributes { key value }
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet {
@@ -360,6 +362,8 @@ function summarizeOrder(order: ShopifyOrder, costCapturedAt: Date) {
     refunds,
     cashback: {
       customerId: (order.customer?.id as string | undefined) ?? null,
+      customerEmail: (order.email as string | undefined) ?? null,
+      customerPhone: (order.phone as string | undefined) ?? null,
       orderUpdatedAt: new Date(order.updatedAt),
       customAttributes: (order.customAttributes ?? []) as Array<{
         key: string;
@@ -508,6 +512,8 @@ export async function syncSalesOrderFromAdmin({
       shopifyOrderId: summary.order.shopifyOrderId,
       orderName: summary.order.name,
       customerId: summary.cashback.customerId,
+      customerEmail: summary.cashback.customerEmail,
+      customerPhone: summary.cashback.customerPhone,
       currencyCode: summary.order.currencyCode,
       eligibleFinancialStatus: summary.order.includedInProfit,
       cancelled: Boolean(summary.order.cancelledAt),
