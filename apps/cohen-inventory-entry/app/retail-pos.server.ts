@@ -20,7 +20,8 @@ import {
   reserveNekudot,
   searchShopifyCustomers,
 } from "./nekudot.server";
-import { cashbackBasisPointsForTier, parseNekudotMoney } from "./nekudot-domain";
+import { cashbackBasisPointsForTier } from "./nekudot-domain";
+import { parseOptionalNekudotMoney } from "./pos-nekudot-money";
 
 const POS_COOKIE = "cohens_retail_pos";
 const SESSION_HOURS = 12;
@@ -671,7 +672,7 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
   if (!sale && String(raw.nekudotCredential ?? "").trim()) {
     nekudotMember = await lookupNekudotMember(session!.shop, raw.nekudotCredential);
     const requestedAmount = String(raw.nekudotRedeemAmount ?? "").trim();
-    const requestedCents = requestedAmount && requestedAmount !== "0" ? parseNekudotMoney(requestedAmount) : 0;
+    const requestedCents = parseOptionalNekudotMoney(requestedAmount);
     if (requestedCents > grossCents - manualDiscountCents) throw new RetailPosError("El canje supera el total después del descuento.", 409, "NEKUDOT_EXCEEDS_TOTAL");
     if (requestedCents) {
       nekudotRedemption = await reserveNekudot({

@@ -22,7 +22,8 @@ import {
   reserveNekudot,
   searchShopifyCustomers,
 } from "./nekudot.server";
-import { cashbackBasisPointsForTier, parseNekudotMoney } from "./nekudot-domain";
+import { cashbackBasisPointsForTier } from "./nekudot-domain";
+import { parseOptionalNekudotMoney } from "./pos-nekudot-money";
 
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
@@ -777,9 +778,7 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
       );
     }
     const requestedAmount = String(raw.nekudotRedeemAmount ?? "").trim();
-    const requestedCents = requestedAmount && requestedAmount !== "0"
-      ? parseNekudotMoney(requestedAmount)
-      : 0;
+    const requestedCents = parseOptionalNekudotMoney(requestedAmount);
     if (requestedCents > grossTotalCents) {
       throw new CafePosError(
         "El canje de Nekudot no puede superar el total de la cuenta.",

@@ -19,7 +19,7 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "node --test app/cafe-pos-domain.test.ts app/nekudot-domain.test.ts app/nfc-bridge.test.ts app/inventory-reconciliation-domain.test.ts",
+    "test": "node --test app/cafe-pos-domain.test.ts app/nekudot-domain.test.ts app/pos-nekudot-money.test.ts app/nfc-bridge.test.ts app/inventory-reconciliation-domain.test.ts",
     "nfc:start": "node scripts/nekudot-nfc-bridge.mjs",
     "catalog:dry-run": "node scripts/import-products-to-dev.mjs",
     "catalog:pilot": "node scripts/import-products-to-dev.mjs --pilot",
