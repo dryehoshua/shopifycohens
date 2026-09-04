@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
 import { claimPendingNekudotOrders } from "../nekudot.server";
+import { memberCardData } from "../nekudot-registration.server";
 import { unauthenticated } from "../shopify.server";
 
 type SessionClaims = {
@@ -113,6 +114,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       accruals: { orderBy: { processedAt: "desc" }, take: 12 },
     },
   });
+  const digitalCard = await memberCardData(refreshed.id);
   return Response.json({
     registered: true,
     member: {
@@ -127,6 +129,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       lifetimeRedeemedCents: refreshed.lifetimeRedeemedCents,
       broker: refreshed.broker ? { displayName: refreshed.broker.displayName, code: refreshed.broker.code } : null,
       credentials: refreshed.credentials.map((credential) => ({ kind: credential.kind, label: credential.label, lastFour: credential.lastFour })),
+      cardNumber: digitalCard.cardNumber,
+      qrDataUrl: digitalCard.qrDataUrl,
+      barcodeDataUrl: digitalCard.barcodeDataUrl,
     },
     ibWallet: refreshed.ownedBroker ? {
       availableCents: refreshed.ownedBroker.commissionBalanceCents,

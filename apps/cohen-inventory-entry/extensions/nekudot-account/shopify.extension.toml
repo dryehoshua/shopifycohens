@@ -2,10 +2,10 @@ api_version = "2026-07"
 
 [[extensions]]
 type = "ui_extension"
-name = "Mis Nekudot"
+name = "Tarjeta Nekudot"
 uid = "6c196199-f154-4c6c-a905-bc065c9d938d"
 handle = "nekudot-account"
-description = "Saldo, cashback, tarjeta e historial Nekudot en la cuenta del cliente"
+description = "Tarjeta digital, saldo, cashback e historial Nekudot en la cuenta del cliente"
 
 [[extensions.targeting]]
 module = "./src/AccountPage.jsx"
