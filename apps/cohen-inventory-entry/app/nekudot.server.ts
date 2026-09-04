@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
 import {
+  appliedOnlineRedemptionCents,
   cashbackBasisPointsForTier,
   calculateNekudotPurchase,
   calculateRestoredRedemptionCents,
@@ -481,11 +482,39 @@ export async function reserveNekudot(input: {
 }) {
   const member = await lookupNekudotMember(input.shop, input.rawToken);
   const amountCents = parseNekudotMoney(input.amount);
+  return reserveNekudotForMember({
+    shop: input.shop,
+    memberId: member.id,
+    amountCents,
+    cartTotalCents: input.cartTotalCents,
+    cartReference: input.cartReference,
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+export async function reserveNekudotForMember(input: {
+  shop: string;
+  memberId: string;
+  amountCents: number;
+  cartTotalCents?: unknown;
+  cartReference?: unknown;
+  idempotencyKey?: unknown;
+  expiresInMs?: number;
+}) {
+  await expireNekudotReservations();
+  const amountCents = input.amountCents;
+  if (!Number.isInteger(amountCents) || amountCents <= 0 || amountCents > 100_000_000) {
+    throw new NekudotError("El importe del canje no es válido.");
+  }
   const cartTotalCents = Number(input.cartTotalCents ?? 0);
   if (Number.isInteger(cartTotalCents) && cartTotalCents > 0 && amountCents > cartTotalCents) {
     throw new NekudotError("El canje no puede superar el total del carrito.");
   }
-  if (amountCents > member.availableCents) {
+  const member = await db.nekudotMember.findFirst({
+    where: { id: input.memberId, programKey: NEKUDOT_PROGRAM_KEY, active: true },
+  });
+  if (!member) throw new NekudotError("No encontramos una membresía Nekudot activa.", 404, "MEMBER_NOT_FOUND");
+  if (amountCents > member.balanceCents - member.reservedCents) {
     throw new NekudotError("El saldo disponible no alcanza para ese canje.", 409, "INSUFFICIENT_BALANCE");
   }
   const rawKey = String(input.idempotencyKey ?? "").trim();
@@ -520,7 +549,7 @@ export async function reserveNekudot(input: {
         amountCents,
         idempotencyKey,
         cartReference: String(input.cartReference ?? "").trim().slice(0, 100) || null,
-        expiresAt: new Date(Date.now() + 30 * 60_000),
+        expiresAt: new Date(Date.now() + Math.max(5 * 60_000, input.expiresInMs ?? 30 * 60_000)),
       },
     });
     await transaction.nekudotMember.update({ where: { id: member.id }, data: { reservedCents: { increment: amountCents } } });
@@ -585,6 +614,8 @@ type OrderInput = {
   orderUpdatedAt: Date;
   purchaseCents: number;
   customAttributes: Array<{ key: string; value: string }>;
+  discountCodes?: string[];
+  totalDiscountCents?: number;
 };
 
 function normalizedClaimEmail(value: unknown) {
@@ -613,7 +644,8 @@ function attribute(attributes: OrderInput["customAttributes"], key: string) {
 export async function reconcileNekudotOrder(input: OrderInput) {
   const memberIdAttribute = attribute(input.customAttributes, "nekudot_member_id");
   const redemptionId = attribute(input.customAttributes, "nekudot_redemption_id");
-  const [identity, attributedMember, reservation, existingAccrual] = await Promise.all([
+  const onlineDiscountCode = input.discountCodes?.find((code) => /^NEKUDOT-[A-F0-9]{16}$/i.test(code)) ?? null;
+  const [identity, attributedMember, attributedReservation, codedReservation, existingAccrual] = await Promise.all([
     input.customerId
       ? db.nekudotCustomerIdentity.findUnique({ where: { shop_shopifyCustomerId: { shop: input.shop, shopifyCustomerId: input.customerId } } })
       : null,
@@ -623,8 +655,12 @@ export async function reconcileNekudotOrder(input: OrderInput) {
     redemptionId
       ? db.nekudotRedemption.findFirst({ where: { id: redemptionId, shop: input.shop }, include: { member: true } })
       : null,
+    onlineDiscountCode
+      ? db.nekudotRedemption.findFirst({ where: { discountCode: onlineDiscountCode, shop: input.shop }, include: { member: true } })
+      : null,
     db.nekudotOrderAccrual.findUnique({ where: { shop_shopifyOrderId: { shop: input.shop, shopifyOrderId: input.shopifyOrderId } } }),
   ]);
+  const reservation = attributedReservation ?? codedReservation;
   const targetMemberId = reservation?.memberId ?? attributedMember?.id ?? identity?.memberId ?? existingAccrual?.memberId ?? null;
   const member = targetMemberId
     ? await db.nekudotMember.findUnique({ where: { id: targetMemberId }, include: { broker: true } })
@@ -656,7 +692,7 @@ export async function reconcileNekudotOrder(input: OrderInput) {
     target,
     originalPurchaseCents,
     cancelled: input.cancelled,
-    redemptionId,
+    redemptionId: reservation?.id ?? redemptionId,
   })).digest("hex");
 
   return db.$transaction(async (transaction) => {
@@ -715,18 +751,34 @@ export async function reconcileNekudotOrder(input: OrderInput) {
           data: { status: "CANCELLED", restoredCents: reservation.amountCents, cancelledAt: new Date() },
         });
       } else if (input.eligibleFinancialStatus && ["RESERVED", "EXPIRED"].includes(reservation.status)) {
+        const chargeCents = reservation.discountCode
+          ? appliedOnlineRedemptionCents(reservation.amountCents, Math.max(0, input.totalDiscountCents ?? 0))
+          : reservation.amountCents;
         const charged = await transaction.nekudotMember.update({ where: { id: reservation.memberId }, data: {
           ...(reservation.status === "RESERVED" ? { reservedCents: { decrement: reservation.amountCents } } : {}),
-          balanceCents: { decrement: reservation.amountCents },
-          lifetimeRedeemedCents: { increment: reservation.amountCents },
+          ...(chargeCents ? {
+            balanceCents: { decrement: chargeCents },
+            lifetimeRedeemedCents: { increment: chargeCents },
+          } : {}),
         } });
-        await transaction.nekudotLedgerEntry.create({ data: {
-          programKey: NEKUDOT_PROGRAM_KEY, memberId: reservation.memberId, walletType: "CLIENT", type: reservation.status === "EXPIRED" ? "LATE_REDEEM" : "REDEEM",
-          amountCents: -reservation.amountCents, balanceAfterCents: charged.balanceCents, currencyCode: input.currencyCode,
-          shop: input.shop, source: "SHOPIFY_ORDER", sourceId: input.shopifyOrderId,
-          idempotencyKey: `redemption:${reservation.id}:applied`, description: `Nekudot usados en ${input.orderName}`,
-        } });
-        await transaction.nekudotRedemption.update({ where: { id: reservation.id }, data: { status: "APPLIED", appliedAt: new Date(), shopifyOrderId: input.shopifyOrderId } });
+        if (chargeCents) {
+          await transaction.nekudotLedgerEntry.create({ data: {
+            programKey: NEKUDOT_PROGRAM_KEY, memberId: reservation.memberId, walletType: "CLIENT", type: reservation.status === "EXPIRED" ? "LATE_REDEEM" : "REDEEM",
+            amountCents: -chargeCents, balanceAfterCents: charged.balanceCents, currencyCode: input.currencyCode,
+            shop: input.shop, source: "SHOPIFY_ORDER", sourceId: input.shopifyOrderId,
+            idempotencyKey: `redemption:${reservation.id}:applied`, description: `Nekudot usados en ${input.orderName}`,
+          } });
+        }
+        await transaction.nekudotRedemption.update({
+          where: { id: reservation.id },
+          data: {
+            amountCents: chargeCents,
+            status: chargeCents ? "APPLIED" : "CANCELLED",
+            appliedAt: chargeCents ? new Date() : null,
+            cancelledAt: chargeCents ? null : new Date(),
+            shopifyOrderId: input.shopifyOrderId,
+          },
+        });
       } else if (input.eligibleFinancialStatus && ["APPLIED", "RESTORED"].includes(reservation.status)) {
         const targetRestoredCents = calculateRestoredRedemptionCents(
           reservation.amountCents,

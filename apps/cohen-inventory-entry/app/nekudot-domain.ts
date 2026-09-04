@@ -136,6 +136,13 @@ export function calculateRestoredRedemptionCents(
   return redeemedCents - stillApplied;
 }
 
+export function appliedOnlineRedemptionCents(reservedCents: number, orderDiscountCents: number) {
+  if (![reservedCents, orderDiscountCents].every(Number.isInteger) || reservedCents < 0 || orderDiscountCents < 0) {
+    throw new Error("Los importes del canje online no son válidos.");
+  }
+  return Math.min(reservedCents, orderDiscountCents);
+}
+
 export function normalizeBrokerCode(value: unknown) {
   const code = String(value ?? "")
     .normalize("NFKD")

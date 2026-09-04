@@ -807,22 +807,24 @@ model NekudotOrderAccrual {
 /// Reserva temporal de saldo iniciada en POS. Sólo se carga al libro mayor
 /// cuando el webhook confirma el pedido pagado.
 model NekudotRedemption {
-  id             String        @id @default(cuid())
-  programKey     String        @default("cohens")
-  memberId       String
-  member         NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  shop           String
-  amountCents    Int
-  restoredCents  Int           @default(0)
-  status         String        @default("RESERVED")
-  idempotencyKey String
-  cartReference  String?
-  shopifyOrderId String?
-  expiresAt      DateTime
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  appliedAt      DateTime?
-  cancelledAt    DateTime?
+  id                String        @id @default(cuid())
+  programKey        String        @default("cohens")
+  memberId          String
+  member            NekudotMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  shop              String
+  amountCents       Int
+  restoredCents     Int           @default(0)
+  status            String        @default("RESERVED")
+  idempotencyKey    String
+  cartReference     String?
+  discountCode      String?       @unique
+  shopifyDiscountId String?       @unique
+  shopifyOrderId    String?
+  expiresAt         DateTime
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  appliedAt         DateTime?
+  cancelledAt       DateTime?
 
   @@unique([programKey, idempotencyKey])
   @@index([memberId, status, expiresAt])

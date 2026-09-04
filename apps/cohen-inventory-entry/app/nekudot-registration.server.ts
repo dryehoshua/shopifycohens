@@ -1155,11 +1155,26 @@ export async function memberOrders(memberId: string) {
   const data = await graphql<{ customer: null | { orders: { nodes: Array<{
     id: string; name: string; processedAt: string; displayFinancialStatus: string; displayFulfillmentStatus: string;
     currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
+    lineItems: { nodes: Array<{
+      quantity: number;
+      product: { handle: string; title: string } | null;
+      variant: { id: string; title: string } | null;
+    }> };
   }> } } }>(admin, `#graphql
     query NekudotPortalOrders($id: ID!) {
       customer(id: $id) {
         orders(first: 20, sortKey: PROCESSED_AT, reverse: true) {
-          nodes { id name processedAt displayFinancialStatus displayFulfillmentStatus currentTotalPriceSet { shopMoney { amount currencyCode } } }
+          nodes {
+            id name processedAt displayFinancialStatus displayFulfillmentStatus
+            currentTotalPriceSet { shopMoney { amount currencyCode } }
+            lineItems(first: 20) {
+              nodes {
+                quantity
+                product { handle title }
+                variant { id title }
+              }
+            }
+          }
         }
       }
     }

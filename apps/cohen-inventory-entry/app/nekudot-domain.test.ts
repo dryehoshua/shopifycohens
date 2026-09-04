@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  appliedOnlineRedemptionCents,
   BLUE_CASHBACK_BASIS_POINTS,
   cashbackBasisPointsForTier,
   calculateNekudotPurchase,
@@ -68,4 +69,11 @@ test("acepta únicamente las siete comunidades de registro", () => {
 test("restituye el canje proporcionalmente en una devolución", () => {
   assert.equal(calculateRestoredRedemptionCents(2_000, 10_000, 7_500), 500);
   assert.equal(calculateRestoredRedemptionCents(2_000, 10_000, 0), 2_000);
+});
+
+test("cobra solamente el descuento Nekudot realmente aplicado online", () => {
+  assert.equal(appliedOnlineRedemptionCents(5_000, 5_000), 5_000);
+  assert.equal(appliedOnlineRedemptionCents(5_000, 3_250), 3_250);
+  assert.equal(appliedOnlineRedemptionCents(5_000, 0), 0);
+  assert.throws(() => appliedOnlineRedemptionCents(5_000, -1));
 });

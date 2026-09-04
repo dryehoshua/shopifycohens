@@ -20,6 +20,8 @@ const requiredScopes = [
   "read_all_orders",
   "read_customers",
   "write_customers",
+  "write_discounts",
+  "write_app_proxy",
 ];
 
 const configuredScopes = Array.from(

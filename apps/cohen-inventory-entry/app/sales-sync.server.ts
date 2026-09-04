@@ -31,6 +31,7 @@ const ORDER_QUERY = `#graphql
       email
       phone
       customAttributes { key value }
+      discountCodes
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet {
         shopMoney { amount currencyCode }
@@ -369,6 +370,8 @@ function summarizeOrder(order: ShopifyOrder, costCapturedAt: Date) {
         key: string;
         value: string;
       }>,
+      discountCodes: (order.discountCodes ?? []) as string[],
+      totalDiscountCents: orderDiscountCents,
     },
   };
 }
@@ -526,6 +529,8 @@ export async function syncSalesOrderFromAdmin({
         customAttributes: summary.cashback.customAttributes,
       }),
       customAttributes: summary.cashback.customAttributes,
+      discountCodes: summary.cashback.discountCodes,
+      totalDiscountCents: summary.cashback.totalDiscountCents,
     });
     await db.salesSyncRun.update({
       where: { id: syncRun.id },

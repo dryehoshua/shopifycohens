@@ -93,11 +93,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     },
   });
-  const appUrl = (process.env.SHOPIFY_APP_URL || "https://cohens-operations-production.up.railway.app").replace(/\/$/, "");
+  const storefrontUrl = (process.env.SHOP_STOREFRONT_URL || "https://cohenskosher.com").replace(/\/$/, "");
   if (!identity?.member.active) {
     return Response.json({
       registered: false,
-      registrationUrl: `${appUrl}/registro/plata`,
+      registrationUrl: `${storefrontUrl}/apps/nekudot`,
       message: "Activa tu tarjeta Nekudot para recibir cashback en tus compras.",
     }, { headers: corsHeaders });
   }
@@ -143,6 +143,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       processedAt: item.processedAt,
     })),
     ledger: refreshed.ledger.map((item) => ({ id: item.id, type: item.type, amountCents: item.amountCents, description: item.description, occurredAt: item.occurredAt })),
-    portalUrl: `${appUrl}/nekudot`,
+    portalUrl: `${storefrontUrl}/apps/nekudot`,
   }, { headers: corsHeaders });
 }
