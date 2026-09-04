@@ -210,6 +210,7 @@ button { touch-action: manipulation; }
 
 .retail-drawer-backdrop { position: fixed; inset: 64px 0 0; z-index: 29; border: 0; background: rgb(10 30 23 / 34%); cursor: pointer; }
 .retail-drawer { position: fixed; inset: 64px 0 0 auto; z-index: 30; width: min(620px, 100%); overflow: auto; padding: 22px; background: white; box-shadow: -10px 0 35px rgb(9 31 23 / 22%); }
+.retail-drawer.wide { width: min(780px, 100%); }
 .retail-drawer > h2 { margin: 5px 0 18px; font-family: Georgia, serif; font-size: 27px; }
 .retail-drawer > .retail-button:first-child { float: right; }
 .retail-catalog-status { clear: both; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -5px 0 12px; padding: 11px 12px; border-radius: 10px; color: #245640; background: #eaf4ee; }

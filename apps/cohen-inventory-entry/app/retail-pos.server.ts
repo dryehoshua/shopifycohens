@@ -22,6 +22,10 @@ import {
 } from "./nekudot.server";
 import { cashbackBasisPointsForTier } from "./nekudot-domain";
 import { parseOptionalNekudotMoney } from "./pos-nekudot-money";
+import {
+  resolvePosMembershipAssignment,
+  updateAssignedMemberProfile,
+} from "./pos-membership-profile.server";
 
 const POS_COOKIE = "cohens_retail_pos";
 const SESSION_HOURS = 12;
@@ -450,13 +454,22 @@ export async function assignRetailCustomerCredential(request: Request, input: {
   replace?: unknown;
   identityVerified?: unknown;
   cardTier?: unknown;
+  blueAffiliationCode?: unknown;
+  community?: unknown;
+  phone?: unknown;
 }) {
   const authorization = await requireRetailManager(request, input.managerPin);
   const { admin } = await adminContext();
   const customerId = String(input.customerId ?? "");
   const rawToken = input.credential;
   const replacing = input.replace === true || input.replace === "true";
-  const member = replacing
+  let assignment;
+  try {
+    assignment = await resolvePosMembershipAssignment(input);
+  } catch (error) {
+    throw new RetailPosError(error instanceof Error ? error.message : "Los datos de la membresía no son válidos.");
+  }
+  const assignedMember = replacing
     ? await replaceNekudotCredential({
         admin,
         shop: authorization.session.shop,
@@ -465,7 +478,7 @@ export async function assignRetailCustomerCredential(request: Request, input: {
         kind: "RFID_OR_QR",
         label: input.label || "Tarjeta reemplazada en Retail POS",
         identityVerified: input.identityVerified,
-        cardTier: input.cardTier,
+        cardTier: assignment.cardTier,
       })
     : await bindNekudotCredential({
         admin,
@@ -474,8 +487,10 @@ export async function assignRetailCustomerCredential(request: Request, input: {
         rawToken,
         kind: "RFID_OR_QR",
         label: input.label || "Tarjeta asignada en Retail POS",
-        cardTier: input.cardTier,
+        cardTier: assignment.cardTier,
+        brokerId: assignment.brokerId,
       });
+  const member = await updateAssignedMemberProfile(assignedMember.id, assignment);
   return {
     id: member.id,
     displayName: member.displayName,

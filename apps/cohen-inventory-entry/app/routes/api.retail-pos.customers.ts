@@ -1,10 +1,18 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { assignRetailCustomerCredential, retailPosJsonError, searchRetailCustomers } from "../retail-pos.server";
+import {
+  assertRetailSameOrigin,
+  assignRetailCustomerCredential,
+  retailPosJsonError,
+} from "../retail-pos.server";
+import {
+  listRetailCustomerProfiles,
+  saveRetailCustomerProfile,
+} from "../cafe-customer-profile.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   try {
     const query = new URL(request.url).searchParams.get("q") ?? "";
-    return Response.json({ ok: true, customers: await searchRetailCustomers(request, query) });
+    return Response.json({ ok: true, customers: await listRetailCustomerProfiles(request, query) });
   } catch (error) {
     return retailPosJsonError(error);
   }
@@ -12,7 +20,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export async function action({ request }: ActionFunctionArgs) {
   try {
+    assertRetailSameOrigin(request);
     const body = await request.json() as {
+      intent?: unknown;
       customerId?: unknown;
       credential?: unknown;
       label?: unknown;
@@ -20,7 +30,16 @@ export async function action({ request }: ActionFunctionArgs) {
       replace?: unknown;
       identityVerified?: unknown;
       cardTier?: unknown;
+      [key: string]: unknown;
     };
+    if (body.intent === "saveProfile") {
+      const customer = await saveRetailCustomerProfile(request, body);
+      return Response.json({
+        ok: true,
+        customer,
+        message: body.customerId ? "Datos del cliente actualizados." : "Cliente creado en Shopify Retail.",
+      });
+    }
     const member = await assignRetailCustomerCredential(request, {
       ...body,
       customerId: body.customerId,

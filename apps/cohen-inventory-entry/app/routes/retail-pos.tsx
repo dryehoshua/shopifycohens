@@ -12,6 +12,11 @@ import { formatMoney, receiptColumns, wrapReceiptText, type CafeReceiptItem } fr
 import { NfcBridgeReader } from "../components/NfcBridgeReader";
 import { NfcReaderDiagnostics } from "../components/NfcReaderDiagnostics";
 import { PrinterDiagnostics } from "../components/PrinterDiagnostics";
+import {
+  PosCustomerProfileEditor,
+  type PosCustomerProfileDraft,
+  type PosCustomerRecord,
+} from "../components/PosCustomerProfileEditor";
 import { cashbackPercentForTier, type NekudotCardTier } from "../nekudot-domain";
 import { maximumNekudotRedemptionCents } from "../pos-nekudot-money";
 import { printLocalDocument, type LocalPrinterDocument } from "../printer-bridge";
@@ -90,11 +95,7 @@ type CustomerMembership = {
   credentialLastFour: string | null;
   broker: { displayName: string; code: string } | null;
 };
-type Customer = {
-  id: string;
-  displayName: string;
-  email: string | null;
-  phone?: string | null;
+type Customer = PosCustomerRecord & {
   numberOfOrders?: number;
   amountSpent?: string;
   member?: CustomerMembership | null;
@@ -346,9 +347,11 @@ export default function RetailPos() {
   const [customersLoaded, setCustomersLoaded] = useState(false);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerEditorMode, setCustomerEditorMode] = useState<"new" | "edit" | null>(null);
   const [newCustomerCredential, setNewCustomerCredential] = useState("");
   const [credentialLabel, setCredentialLabel] = useState("Tarjeta de prueba POS");
   const [cardTier, setCardTier] = useState<NekudotCardTier | "">("");
+  const [blueAffiliationCode, setBlueAffiliationCode] = useState("");
   const [replaceCredential, setReplaceCredential] = useState(false);
   const [identityVerified, setIdentityVerified] = useState(false);
   const [member, setMember] = useState<Member | null>(null);
@@ -663,6 +666,7 @@ export default function RetailPos() {
     setNewCustomerCredential(`COHENS-TEST-${suffix}`);
     setCredentialLabel("Tarjeta de prueba POS");
     setCardTier("");
+    setBlueAffiliationCode("");
     setReplaceCredential(false);
     setIdentityVerified(false);
   }
@@ -675,6 +679,51 @@ export default function RetailPos() {
         ? `${item.displayName} identificado por su perfil Shopify. Tarjeta ${membershipLabel(item.member)}; para canjear saldo, lee su tarjeta.`
         : `${item.displayName} seleccionado. Asigna una tarjeta para activar su membresía Nekudot.`,
     });
+  }
+
+  function chooseCustomer(item: Customer, preserveCredential = false) {
+    setSelectedCustomer(item);
+    setCustomerEditorMode(null);
+    setCardTier(item.member?.cardTier || item.profile?.cardTier || "");
+    setBlueAffiliationCode(item.member?.broker?.code || item.profile?.blueAffiliationCode || "");
+    if (!preserveCredential) setNewCustomerCredential("");
+    setReplaceCredential(false);
+    setIdentityVerified(false);
+  }
+
+  async function saveCustomerProfile(draft: PosCustomerProfileDraft) {
+    let managerPin: string | undefined;
+    const changingMembership = Boolean(selectedCustomer?.member && (
+      draft.cardTier !== selectedCustomer.member.cardTier
+      || (draft.cardTier === "BLUE" && draft.blueAffiliationCode.trim().toUpperCase() !== (selectedCustomer.member.broker?.code || "").toUpperCase())
+    ));
+    if (changingMembership && initial.staff?.role !== "MANAGER") {
+      const pin = window.prompt("Ingresa el PIN del gerente para cambiar la membresía:");
+      if (pin === null) return;
+      managerPin = pin;
+    }
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ customer: Customer; message: string }>("/api/retail-pos/customers", {
+        method: "POST",
+        body: JSON.stringify({ intent: "saveProfile", ...draft, managerPin }),
+      });
+      setCustomers((current) => {
+        const exists = current.some((item) => item.id === result.customer.id);
+        return exists
+          ? current.map((item) => item.id === result.customer.id ? result.customer : item)
+          : [result.customer, ...current];
+      });
+      setSelectedCustomer(result.customer);
+      if (customer?.id === result.customer.id) setCustomer(result.customer);
+      setCardTier(result.customer.member?.cardTier || result.customer.profile?.cardTier || "");
+      setBlueAffiliationCode(result.customer.member?.broker?.code || result.customer.profile?.blueAffiliationCode || "");
+      setCustomerEditorMode(null);
+      setCustomerSearch("");
+      setMessage({ tone: "success", text: result.message });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudieron guardar los datos del cliente." });
+    } finally { setBusy(false); }
   }
 
   async function assignCustomerCredential() {
@@ -699,6 +748,9 @@ export default function RetailPos() {
           credential: rawCredential,
           label: credentialLabel,
           cardTier,
+          blueAffiliationCode,
+          community: selectedCustomer.profile?.community,
+          phone: selectedCustomer.phone,
           managerPin,
           replace: replaceCredential,
           identityVerified: identityVerified ? "yes" : "no",
@@ -711,7 +763,7 @@ export default function RetailPos() {
       setMessage({ tone: "success", text: `${result.message} Ya puede identificarse con la tarjeta o con su teléfono.` });
       await identifyCredential(rawCredential);
       setCardAssignmentOpen(false);
-      setCardTier(""); setReplaceCredential(false); setIdentityVerified(false);
+      setCardTier(""); setBlueAffiliationCode(""); setReplaceCredential(false); setIdentityVerified(false);
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarjeta." });
     } finally { setBusy(false); }
@@ -973,7 +1025,7 @@ export default function RetailPos() {
           <input ref={cardCustomerSearchRef} value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Filtrar por nombre, teléfono o correo…" aria-label="Filtrar clientes para asignar tarjeta" />
         </div>
         <div className="retail-customer-results retail-card-customer-results">
-          {visibleCustomers.map((item) => <button type="button" key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => { setSelectedCustomer(item); setCardTier(""); }}>
+          {visibleCustomers.map((item) => <button type="button" key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item, true)}>
             <span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span>
             <span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span>
             <i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i>
@@ -981,21 +1033,24 @@ export default function RetailPos() {
         </div>
         {customersLoading ? <div className="retail-empty compact"><strong>Cargando clientes…</strong></div> : null}
         {customersLoaded && !customersLoading && !visibleCustomers.length ? <div className="retail-empty compact"><strong>No encontramos coincidencias</strong><span>Prueba otro nombre, teléfono o correo.</span></div> : null}
+        <button type="button" className="retail-button secondary wide" onClick={() => { setCardAssignmentOpen(false); setDrawer("customers"); setSelectedCustomer(null); setCustomerEditorMode("new"); }}>+ Crear cliente nuevo</button>
         {selectedCustomer ? <div className="retail-card-selected-customer">
           <span className="retail-customer-avatar large">{selectedCustomer.displayName.slice(0, 2).toUpperCase()}</span>
           <div><small>CLIENTE SELECCIONADO</small><strong>{selectedCustomer.displayName}</strong><span>{selectedCustomer.phone || selectedCustomer.email || "Cliente Shopify"}</span></div>
         </div> : <div className="retail-card-selection-help">Selecciona un cliente para continuar.</div>}
         <label className="retail-field">Tipo de tarjeta
-          <select value={cardTier} onChange={(event) => setCardTier(event.target.value as NekudotCardTier | "")} required>
+          <select value={cardTier} onChange={(event) => { const tier = event.target.value as NekudotCardTier | ""; setCardTier(tier); if (tier !== "BLUE") setBlueAffiliationCode(""); }} required>
             <option value="">Selecciona el tipo de tarjeta…</option>
             <option value="SILVER">Silver · {cashbackPercentForTier("SILVER")}% cashback · venta en tienda</option>
             <option value="BLUE">Blue · {cashbackPercentForTier("BLUE")}% cashback · Bet Midrash / Bet Knesiot</option>
             <option value="GOLDEN">Golden · {cashbackPercentForTier("GOLDEN")}% cashback · mensualidad</option>
+            <option value="VOUCHER">Vales · sin cashback</option>
           </select>
         </label>
+        {cardTier === "BLUE" ? <label className="retail-field">Clave de afiliación Blue<input value={blueAffiliationCode} onChange={(event) => setBlueAffiliationCode(event.target.value)} placeholder="Código proporcionado por el IB" /></label> : null}
         <div className="retail-card-modal-actions">
           <button type="button" disabled={busy} onClick={closeCardAssignment}>Cancelar</button>
-          <button type="button" className="primary" disabled={busy || !selectedCustomer || !cardTier || newCustomerCredential.trim().length < 4} onClick={assignCustomerCredential}>{busy ? "Asignando…" : selectedCustomer && cardTier ? `Asignar ${cardTierLabel(cardTier)} a ${selectedCustomer.displayName}` : "Selecciona cliente y tipo"}</button>
+          <button type="button" className="primary" disabled={busy || !selectedCustomer || !cardTier || (cardTier === "BLUE" && !blueAffiliationCode.trim()) || newCustomerCredential.trim().length < 4} onClick={assignCustomerCredential}>{busy ? "Asignando…" : selectedCustomer && cardTier ? `Asignar ${cardTierLabel(cardTier)} a ${selectedCustomer.displayName}` : "Selecciona cliente y tipo"}</button>
         </div>
       </section>
     </div> : null}
@@ -1020,7 +1075,7 @@ export default function RetailPos() {
         </form>
       </section>
     </div> : null}
-    {drawer ? <><button type="button" className="retail-drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="retail-drawer"><button className="retail-button secondary" onClick={() => setDrawer(null)}>Cerrar</button>
+    {drawer ? <><button type="button" className="retail-drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className={`retail-drawer ${drawer === "customers" ? "wide" : ""}`}><button className="retail-button secondary" onClick={() => setDrawer(null)}>Cerrar</button>
       {drawer === "catalog" ? <><span className="retail-kicker">CATÁLOGO SHOPIFY</span><h2>Buscar producto</h2>
         <div className="retail-catalog-status"><div><strong>{catalogMeta?.productCount ?? products.length} productos · {catalogMeta?.variantCount ?? products.reduce((sum, product) => sum + product.variants.length, 0)} variantes</strong><small>Ubicación: {catalogMeta?.location.name ?? "Plaza Victoria"} · incluye productos sin existencia</small></div><button type="button" disabled={catalogRefreshing} onClick={() => { void loadCatalog().catch((error) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar Shopify." })); }}>{catalogRefreshing ? "Consultando…" : "Actualizar Shopify"}</button></div>
         <input className="retail-catalog-search" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Nombre, SKU, código o marca" />
@@ -1047,16 +1102,19 @@ export default function RetailPos() {
       {drawer === "customers" ? <><span className="retail-kicker">CLIENTES SHOPIFY + NEKUDOT</span><h2>Clientes</h2>
         <div className="retail-member-scan"><strong>Identificación inmediata por tarjeta</strong><form onSubmit={(event) => { event.preventDefault(); void identifyCredential(credential); }}><input value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Código de barras / QR / NFC" autoComplete="off" /><button disabled={busy || credential.length < 4}>Leer</button></form><NfcBridgeReader onCredential={(value) => { void identifyCredential(value); }} /></div>
         {member ? <div className="retail-selected"><strong>{member.displayName}</strong><span>{formatMoney(member.availableCents)} disponible · Tarjeta {membershipLabel(member)}{member.broker ? ` · Broker ${member.broker.displayName}` : ""}</span></div> : null}
-        <div className="retail-customer-search-heading"><strong>Clientes de Cohen&apos;s</strong><small>La lista completa aparece abajo; escribe solo para filtrar</small></div>
+        <button className="retail-button primary wide" type="button" onClick={() => { setSelectedCustomer(null); setCustomerEditorMode("new"); }}>+ Agregar cliente nuevo</button>
+        {customerEditorMode ? <PosCustomerProfileEditor key={`${customerEditorMode}-${selectedCustomer?.id || "new"}`} customer={customerEditorMode === "edit" ? selectedCustomer : null} busy={busy} onCancel={() => setCustomerEditorMode(null)} onSave={saveCustomerProfile} /> : null}
+        <div className="retail-customer-search-heading"><strong>Clientes de Cohen&apos;s</strong><small>Esta lista pertenece a la tienda Shopify de retail; escribe solo para filtrar</small></div>
         <div className="retail-customer-search"><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Filtrar por nombre, teléfono o correo…" /></div>
-        <div className="retail-customer-results">{visibleCustomers.map((item) => <button key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => { setSelectedCustomer(item); setNewCustomerCredential(""); setCardTier(""); setReplaceCredential(false); setIdentityVerified(false); }}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
+        <div className="retail-customer-results">{visibleCustomers.map((item) => <button key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item)}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
         {customersLoading ? <div className="retail-empty compact"><strong>Cargando clientes…</strong></div> : null}
         {customersLoaded && !customersLoading && !visibleCustomers.length ? <div className="retail-empty compact"><strong>No encontramos coincidencias</strong><span>Prueba otro nombre, teléfono o correo.</span></div> : null}
-        {selectedCustomer ? <section className="retail-customer-profile">
+        {selectedCustomer && !customerEditorMode ? <section className="retail-customer-profile">
           <div className="retail-customer-profile-head"><span className="retail-customer-avatar large">{selectedCustomer.displayName.slice(0, 2).toUpperCase()}</span><div><span className="retail-kicker">CLIENTE SELECCIONADO</span><h3>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p></div></div>
           {selectedCustomer.member ? <div className="retail-membership-status active"><strong>Tarjeta {membershipLabel(selectedCustomer.member)}</strong><span>{formatMoney(selectedCustomer.member.availableCents)} disponibles · {selectedCustomer.member.credentialCount} tarjeta(s){selectedCustomer.member.credentialLastFour ? ` · termina ${selectedCustomer.member.credentialLastFour}` : ""}</span></div> : <div className="retail-membership-status"><strong>Aún no tiene tarjeta</strong><span>Al asignarla se crea su wallet compartida con la cafetería.</span></div>}
-          <button className="retail-button primary wide" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar este cliente en la venta</button>
-          <div className="retail-card-assignment"><span className="retail-kicker">ASIGNAR TARJETA RFID / QR</span><label>ID de la tarjeta<input value={newCustomerCredential} onChange={(event) => setNewCustomerCredential(event.target.value)} placeholder="Acerca la tarjeta o genera una de prueba" /></label><NfcBridgeReader compact onCredential={setNewCustomerCredential} /><label>Etiqueta<input value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={80} /></label><label>Tipo de tarjeta<select value={cardTier} onChange={(event) => setCardTier(event.target.value as NekudotCardTier | "")} required><option value="">Selecciona el tipo…</option><option value="SILVER">Silver · 2% · venta en tienda</option><option value="BLUE">Blue · 5% · Bet Midrash / Bet Knesiot</option><option value="GOLDEN">Golden · 8% · mensualidad</option></select></label><div className="retail-card-actions"><button type="button" onClick={generateTestCredential}>Generar ID de prueba</button><button type="button" className="primary" disabled={busy || !cardTier || newCustomerCredential.trim().length < 4 || (replaceCredential && !identityVerified)} onClick={assignCustomerCredential}>{busy ? "Asignando…" : cardTier ? `Asignar ${cardTierLabel(cardTier)}` : "Selecciona el tipo"}</button></div>
+          {selectedCustomer.address ? <div className="pos-customer-address-summary"><strong>Domicilio de entrega</strong><br />{selectedCustomer.address.address1}{selectedCustomer.address.address2 ? `, ${selectedCustomer.address.address2}` : ""}<br />{[selectedCustomer.address.city, selectedCustomer.address.province, selectedCustomer.address.zip].filter(Boolean).join(", ")}{selectedCustomer.profile?.deliveryInstructions ? <><br /><em>{selectedCustomer.profile.deliveryInstructions}</em></> : null}</div> : <div className="retail-membership-status"><strong>Sin domicilio de entrega</strong><span>Puedes agregarlo al editar los datos.</span></div>}
+          <div className="pos-customer-profile-actions"><button className="retail-button primary" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar en la venta</button><button className="retail-button secondary" type="button" onClick={() => setCustomerEditorMode("edit")}>Editar todos sus datos</button></div>
+          <div className="retail-card-assignment"><span className="retail-kicker">ASIGNAR TARJETA RFID / QR</span><label>ID de la tarjeta<input value={newCustomerCredential} onChange={(event) => setNewCustomerCredential(event.target.value)} placeholder="Acerca la tarjeta o genera una de prueba" /></label><NfcBridgeReader compact onCredential={setNewCustomerCredential} /><label>Etiqueta<input value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={80} /></label><label>Tipo de tarjeta<select value={cardTier} onChange={(event) => { const tier = event.target.value as NekudotCardTier | ""; setCardTier(tier); if (tier !== "BLUE") setBlueAffiliationCode(""); }} required><option value="">Selecciona el tipo…</option><option value="SILVER">Silver · 2% · venta en tienda</option><option value="BLUE">Blue · 5% · Bet Midrash / Bet Knesiot</option><option value="GOLDEN">Golden · 8% · mensualidad</option><option value="VOUCHER">Vales · sin cashback</option></select></label>{cardTier === "BLUE" ? <label>Clave de afiliación Blue<input value={blueAffiliationCode} onChange={(event) => setBlueAffiliationCode(event.target.value)} placeholder="Código proporcionado por el IB" /></label> : null}<div className="retail-card-actions"><button type="button" onClick={generateTestCredential}>Generar ID de prueba</button><button type="button" className="primary" disabled={busy || !cardTier || (cardTier === "BLUE" && !blueAffiliationCode.trim()) || newCustomerCredential.trim().length < 4 || (replaceCredential && !identityVerified)} onClick={assignCustomerCredential}>{busy ? "Asignando…" : cardTier ? `Asignar ${cardTierLabel(cardTier)}` : "Selecciona el tipo"}</button></div>
             {selectedCustomer.member ? <div className="retail-replace-option"><label><input type="checkbox" checked={replaceCredential} onChange={(event) => { setReplaceCredential(event.target.checked); if (!event.target.checked) setIdentityVerified(false); }} /> Reemplazar tarjetas anteriores</label>{replaceCredential ? <label><input type="checkbox" checked={identityVerified} onChange={(event) => setIdentityVerified(event.target.checked)} /> Verifiqué personalmente su identificación</label> : null}</div> : null}
           </div>
         </section> : null}

@@ -1,0 +1,22 @@
+.pos-customer-editor { margin: 14px 0; padding: 16px; border: 1px solid #d8bd88; border-radius: 14px; background: #fffaf1; color: #2d211b; }
+.pos-customer-editor__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pos-customer-editor__header span { color: #95622f; font-size: 11px; font-weight: 900; letter-spacing: .09em; }
+.pos-customer-editor__header h3 { margin: 3px 0 0; }
+.pos-customer-editor__header button { border: 0; border-radius: 9px; padding: 9px 12px; background: #efe1cc; color: #40291d; cursor: pointer; font-weight: 800; }
+.pos-customer-editor h4 { margin: 18px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #eadcc8; }
+.pos-customer-editor h4 small { color: #76665d; font-weight: 500; }
+.pos-customer-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.pos-customer-form-grid label { display: grid; gap: 5px; color: #4e3b31; font-size: 13px; font-weight: 750; }
+.pos-customer-form-grid input, .pos-customer-form-grid select, .pos-customer-form-grid textarea { min-width: 0; width: 100%; border: 1px solid #cdbdab; border-radius: 10px; padding: 11px; background: white; color: #241a15; font: inherit; }
+.pos-customer-form-grid textarea { resize: vertical; }
+.pos-customer-form-grid__wide { grid-column: 1 / -1; }
+.pos-customer-editor__notice { margin: 14px 0; padding: 10px; border-radius: 10px; background: #e7eefb; color: #244d86; font-size: 13px; line-height: 1.45; }
+.pos-customer-editor__save { width: 100%; border: 0; border-radius: 10px; padding: 13px; background: #26744c; color: white; cursor: pointer; font-weight: 900; }
+.pos-customer-editor__save:disabled { cursor: not-allowed; opacity: .5; }
+.pos-customer-address-summary { margin: 10px 0; padding: 10px; border-radius: 10px; background: white; color: #58463c; font-size: 13px; line-height: 1.5; }
+.pos-customer-profile-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+
+@media (max-width: 560px) {
+  .pos-customer-form-grid, .pos-customer-profile-actions { grid-template-columns: 1fr; }
+  .pos-customer-form-grid__wide { grid-column: auto; }
+}

@@ -11,6 +11,11 @@ import {
 import { formatMoney, receiptColumns, wrapReceiptText, type CafeReceiptItem } from "../cafe-pos-domain";
 import { NfcBridgeReader } from "../components/NfcBridgeReader";
 import { NfcReaderDiagnostics } from "../components/NfcReaderDiagnostics";
+import {
+  PosCustomerProfileEditor,
+  type PosCustomerProfileDraft,
+  type PosCustomerRecord,
+} from "../components/PosCustomerProfileEditor";
 import { cashbackPercentForTier, type NekudotCardTier } from "../nekudot-domain";
 import "../nfc-bridge.css";
 import "../nfc-reader-diagnostics.css";
@@ -119,11 +124,7 @@ type CustomerMembership = {
   credentialLastFour: string | null;
   broker: { displayName: string; code: string } | null;
 };
-type Customer = {
-  id: string;
-  displayName: string;
-  email: string | null;
-  phone?: string | null;
+type Customer = PosCustomerRecord & {
   numberOfOrders?: number;
   member?: CustomerMembership | null;
 };
@@ -283,9 +284,11 @@ export default function CafePos() {
   const [customersLoaded, setCustomersLoaded] = useState(false);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerEditorMode, setCustomerEditorMode] = useState<"new" | "edit" | null>(null);
   const [newCustomerCredential, setNewCustomerCredential] = useState("");
   const [credentialLabel, setCredentialLabel] = useState("Tarjeta NFC Café POS");
   const [cardTier, setCardTier] = useState<NekudotCardTier | "">("");
+  const [blueAffiliationCode, setBlueAffiliationCode] = useState("");
   const [replaceCredential, setReplaceCredential] = useState(false);
   const [identityVerified, setIdentityVerified] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
@@ -612,6 +615,51 @@ export default function CafePos() {
     });
   }
 
+  function chooseCustomer(item: Customer) {
+    setSelectedCustomer(item);
+    setCustomerEditorMode(null);
+    setCardTier(item.member?.cardTier || item.profile?.cardTier || "");
+    setBlueAffiliationCode(item.member?.broker?.code || item.profile?.blueAffiliationCode || "");
+    setNewCustomerCredential("");
+    setReplaceCredential(false);
+    setIdentityVerified(false);
+  }
+
+  async function saveCustomerProfile(draft: PosCustomerProfileDraft) {
+    let managerPin: string | undefined;
+    const changingMembership = Boolean(selectedCustomer?.member && (
+      draft.cardTier !== selectedCustomer.member.cardTier
+      || (draft.cardTier === "BLUE" && draft.blueAffiliationCode.trim().toUpperCase() !== (selectedCustomer.member.broker?.code || "").toUpperCase())
+    ));
+    if (changingMembership && initial.staff?.role !== "MANAGER") {
+      const pin = window.prompt("Ingresa el PIN del gerente para cambiar la membresía:");
+      if (pin === null) return;
+      managerPin = pin;
+    }
+    setBusy(true); setMessage(null);
+    try {
+      const result = await api<{ customer: Customer; message: string }>("/api/cafe-pos/customers", {
+        method: "POST",
+        body: JSON.stringify({ intent: "saveProfile", ...draft, managerPin }),
+      });
+      setCustomers((current) => {
+        const exists = current.some((item) => item.id === result.customer.id);
+        return exists
+          ? current.map((item) => item.id === result.customer.id ? result.customer : item)
+          : [result.customer, ...current];
+      });
+      setSelectedCustomer(result.customer);
+      if (customer?.id === result.customer.id) setCustomer(result.customer);
+      setCardTier(result.customer.member?.cardTier || result.customer.profile?.cardTier || "");
+      setBlueAffiliationCode(result.customer.member?.broker?.code || result.customer.profile?.blueAffiliationCode || "");
+      setCustomerEditorMode(null);
+      setCustomerSearch("");
+      setMessage({ tone: "success", text: result.message });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudieron guardar los datos del cliente." });
+    } finally { setBusy(false); }
+  }
+
   async function assignCustomerCredential() {
     if (!selectedCustomer || newCustomerCredential.trim().length < 4 || !cardTier) return;
     let managerPin: string | undefined;
@@ -634,6 +682,9 @@ export default function CafePos() {
           credential: rawCredential,
           label: credentialLabel,
           cardTier,
+          blueAffiliationCode,
+          community: selectedCustomer.profile?.community,
+          phone: selectedCustomer.phone,
           managerPin,
           replace: replaceCredential,
           identityVerified: identityVerified ? "yes" : "no",
@@ -645,6 +696,7 @@ export default function CafePos() {
       setCustomer(updated);
       setNekudotCredential(rawCredential);
       setCardTier("");
+      setBlueAffiliationCode("");
       setReplaceCredential(false);
       setIdentityVerified(false);
       setMessage({ tone: "success", text: `${result.message} Ya puede usarla en cafetería y retail.` });
@@ -744,7 +796,7 @@ export default function CafePos() {
         <div className="payment-grid"><button className="btn btn-success" disabled={busy || !shift || !cart.length} onClick={() => charge("CASH")}>Cobrar {formatMoney(amountDueCents)} efectivo</button><button className="btn btn-primary" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}>Registrar {formatMoney(amountDueCents)} terminal</button></div>
       </aside>
     </div>
-    {drawer ? <><button type="button" className="drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className="drawer">
+    {drawer ? <><button type="button" className="drawer-backdrop" aria-label="Cerrar panel" onClick={() => setDrawer(null)} /><aside className={`drawer ${drawer === "customers" ? "drawer-wide" : ""}`}>
       <button className="btn btn-secondary" onClick={() => setDrawer(null)}>Cerrar</button>
       {drawer === "orders" ? <><h2>Pedidos recientes</h2>{sales.map((sale) => <div className="sale-card" key={sale.id}>
         <div className="sale-card-head"><div><strong>{sale.shopifyOrderName || sale.id.slice(-8)}</strong><br /><small>{new Date(sale.createdAt).toLocaleString("es-MX")}</small><br /><small>Atendió: {sale.staff.name}</small><br /><small>Cliente: {sale.customerName || "Sin asignar"}</small></div><strong>{formatMoney(sale.totalCents)}</strong></div>
@@ -761,13 +813,17 @@ export default function CafePos() {
       {drawer === "shift" ? <><h2>Turno de caja</h2>{!shift ? <><p>No hay turno abierto.</p><label className="field">Fondo inicial<input type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label><button className="btn btn-success btn-wide" disabled={busy} onClick={openShift}>Abrir turno</button></> : <><div className="status status-info">Abierto por {shift.staff.name} el {new Date(shift.openedAt).toLocaleString("es-MX")}. Fondo: {formatMoney(shift.openingCashCents)}</div><label className="field">Efectivo contado<input type="number" min="0" step="0.01" value={closingCash} onChange={(event) => setClosingCash(event.target.value)} /></label><label className="field">Total de terminal<input type="number" min="0" step="0.01" value={terminalCounted} onChange={(event) => setTerminalCounted(event.target.value)} /></label><label className="field">Notas<textarea value={closeNotes} onChange={(event) => setCloseNotes(event.target.value)} /></label><button className="btn btn-danger btn-wide" disabled={busy || closingCash === "" || terminalCounted === ""} onClick={closeShift}>Cerrar y conciliar turno</button></>}</> : null}
       {drawer === "reader" ? <><h2>Prueba de lectores</h2><p>La pistola de código de barras funciona como teclado: enfoca el campo Nekudot y escanea. El lector NFC se prueba abajo.</p><NfcReaderDiagnostics lookupEndpoint="/api/cafe-pos/nekudot" locationLabel="Cafetería" /></> : null}
       {drawer === "customers" ? <><h2>Clientes Shopify + Nekudot</h2>
-        <p>La lista completa aparece automáticamente. Escribe para filtrarla por nombre, teléfono o correo.</p>
+        <p>Crea y edita perfiles con domicilio para entrega. Esta lista pertenece a la tienda Shopify de cafetería.</p>
+        <button className="btn btn-success btn-wide" type="button" onClick={() => { setSelectedCustomer(null); setCustomerEditorMode("new"); }}>+ Agregar cliente nuevo</button>
+        {customerEditorMode ? <PosCustomerProfileEditor key={`${customerEditorMode}-${selectedCustomer?.id || "new"}`} customer={customerEditorMode === "edit" ? selectedCustomer : null} busy={busy} onCancel={() => setCustomerEditorMode(null)} onSave={saveCustomerProfile} /> : null}
         <div className="customer-search"><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Filtrar clientes…" /></div>
-        <div className="customer-results">{visibleCustomers.map((item) => <button type="button" key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => { setSelectedCustomer(item); setCardTier(""); }}><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"}</small><em>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin membresía Nekudot"}</em></span><b>{selectedCustomer?.id === item.id ? "✓" : "›"}</b></button>)}</div>
+        <div className="customer-results">{visibleCustomers.map((item) => <button type="button" key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item)}><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"}</small><em>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin membresía Nekudot"}</em></span><b>{selectedCustomer?.id === item.id ? "✓" : "›"}</b></button>)}</div>
         {customersLoading ? <div className="status status-info">Cargando todos los clientes…</div> : null}
         {customersLoaded && !customersLoading && !visibleCustomers.length ? <div className="status status-info">No hay coincidencias con ese filtro.</div> : null}
-        {selectedCustomer ? <section className="customer-profile"><h3>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p><button className="btn btn-success btn-wide" type="button" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar este cliente en la venta</button>
-          <div className="credential-assignment"><h3>{selectedCustomer.member ? "Asignar otra tarjeta" : "Activar Nekudot"}</h3>{selectedCustomer.member ? <div className="status status-info">Actual: {membershipLabel(selectedCustomer.member)}</div> : null}<label className="field">ID de tarjeta<input value={newCustomerCredential} onChange={(event) => setNewCustomerCredential(event.target.value)} placeholder="Acerca la tarjeta o escribe el ID" /></label><NfcBridgeReader compact onCredential={setNewCustomerCredential} /><label className="field">Etiqueta<input value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={80} /></label><label className="field">Tipo de tarjeta<select value={cardTier} onChange={(event) => setCardTier(event.target.value as NekudotCardTier | "")} required><option value="">Selecciona el tipo de tarjeta…</option><option value="SILVER">Silver · {cashbackPercentForTier("SILVER")}% · venta en tienda</option><option value="BLUE">Blue · {cashbackPercentForTier("BLUE")}% · Bet Midrash / Bet Knesiot</option><option value="GOLDEN">Golden · {cashbackPercentForTier("GOLDEN")}% · mensualidad</option></select></label>{selectedCustomer.member ? <><label className="check-field"><input type="checkbox" checked={replaceCredential} onChange={(event) => { setReplaceCredential(event.target.checked); setIdentityVerified(false); }} /> Reemplazar tarjeta perdida</label>{replaceCredential ? <label className="check-field warning"><input type="checkbox" checked={identityVerified} onChange={(event) => setIdentityVerified(event.target.checked)} /> Verifiqué la identidad del cliente</label> : null}</> : null}<button className="btn btn-primary btn-wide" type="button" disabled={busy || !cardTier || newCustomerCredential.trim().length < 4 || (replaceCredential && !identityVerified)} onClick={assignCustomerCredential}>{busy ? "Guardando…" : cardTier ? `${replaceCredential ? "Reemplazar por" : "Asignar"} ${cardTierLabel(cardTier)}` : "Selecciona el tipo"}</button></div>
+        {selectedCustomer && !customerEditorMode ? <section className="customer-profile"><h3>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p>
+          {selectedCustomer.address ? <div className="pos-customer-address-summary"><strong>Domicilio de entrega</strong><br />{selectedCustomer.address.address1}{selectedCustomer.address.address2 ? `, ${selectedCustomer.address.address2}` : ""}<br />{[selectedCustomer.address.city, selectedCustomer.address.province, selectedCustomer.address.zip].filter(Boolean).join(", ")}{selectedCustomer.profile?.deliveryInstructions ? <><br /><em>{selectedCustomer.profile.deliveryInstructions}</em></> : null}</div> : <div className="status status-info">Sin domicilio de entrega registrado.</div>}
+          <div className="pos-customer-profile-actions"><button className="btn btn-success" type="button" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar en la venta</button><button className="btn btn-secondary" type="button" onClick={() => setCustomerEditorMode("edit")}>Editar todos sus datos</button></div>
+          <div className="credential-assignment"><h3>{selectedCustomer.member ? "Asignar otra tarjeta" : "Activar Nekudot"}</h3>{selectedCustomer.member ? <div className="status status-info">Actual: {membershipLabel(selectedCustomer.member)}</div> : null}<label className="field">ID de tarjeta<input value={newCustomerCredential} onChange={(event) => setNewCustomerCredential(event.target.value)} placeholder="Acerca la tarjeta o escribe el ID" /></label><NfcBridgeReader compact onCredential={setNewCustomerCredential} /><label className="field">Etiqueta<input value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={80} /></label><label className="field">Tipo de tarjeta<select value={cardTier} onChange={(event) => { const tier = event.target.value as NekudotCardTier | ""; setCardTier(tier); if (tier !== "BLUE") setBlueAffiliationCode(""); }} required><option value="">Selecciona el tipo de tarjeta…</option><option value="SILVER">Silver · {cashbackPercentForTier("SILVER")}% · venta en tienda</option><option value="BLUE">Blue · {cashbackPercentForTier("BLUE")}% · Bet Midrash / Bet Knesiot</option><option value="GOLDEN">Golden · {cashbackPercentForTier("GOLDEN")}% · mensualidad</option><option value="VOUCHER">Vales · sin cashback</option></select></label>{cardTier === "BLUE" ? <label className="field">Clave de afiliación Blue<input value={blueAffiliationCode} onChange={(event) => setBlueAffiliationCode(event.target.value)} placeholder="Código proporcionado por el IB" /></label> : null}{selectedCustomer.member ? <><label className="check-field"><input type="checkbox" checked={replaceCredential} onChange={(event) => { setReplaceCredential(event.target.checked); setIdentityVerified(false); }} /> Reemplazar tarjeta perdida</label>{replaceCredential ? <label className="check-field warning"><input type="checkbox" checked={identityVerified} onChange={(event) => setIdentityVerified(event.target.checked)} /> Verifiqué la identidad del cliente</label> : null}</> : null}<button className="btn btn-primary btn-wide" type="button" disabled={busy || !cardTier || (cardTier === "BLUE" && !blueAffiliationCode.trim()) || newCustomerCredential.trim().length < 4 || (replaceCredential && !identityVerified)} onClick={assignCustomerCredential}>{busy ? "Guardando…" : cardTier ? `${replaceCredential ? "Reemplazar por" : "Asignar"} ${cardTierLabel(cardTier)}` : "Selecciona el tipo"}</button></div>
         </section> : null}
         {customer ? <button className="btn btn-danger btn-wide" type="button" onClick={() => { setCustomer(null); setNekudotMember(null); setNekudotCredential(""); setNekudotRedeemAmount("0"); setDrawer(null); }}>Continuar sin cliente</button> : null}
       </> : null}
