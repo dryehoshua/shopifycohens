@@ -40,6 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return {
       enabled: true as const,
       shop,
+      sessionExpired: new URL(request.url).searchParams.get("session") === "expired",
       staff: session ? { id: session.staff.id, name: session.staff.name, role: session.staff.role } : null,
       shift: session ? await currentCafeShift(shop) : null,
     };
@@ -180,17 +181,44 @@ function newSaleKey() {
   return `sale_${[...values].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code: string,
+  ) {
+    super(message);
+  }
+}
+
+let reloadingForExpiredSession = false;
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const body = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error || "No se pudo completar la operación.");
+  const body = (await response.json()) as T & { error?: string; code?: string };
+  if (!response.ok) {
+    const code = body.code || "API_ERROR";
+    if (
+      response.status === 401
+      && (code === "AUTH_REQUIRED" || code === "AUTH_EXPIRED")
+      && !reloadingForExpiredSession
+    ) {
+      reloadingForExpiredSession = true;
+      window.location.replace("/cafe-pos?session=expired");
+    }
+    throw new ApiError(
+      body.error || "No se pudo completar la operación.",
+      response.status,
+      code,
+    );
+  }
   return body;
 }
 
-function Login() {
+function Login({ sessionExpired }: { sessionExpired: boolean }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -199,7 +227,7 @@ function Login() {
     setPending(true); setError("");
     try {
       await api("/api/cafe-pos/auth", { method: "POST", body: JSON.stringify({ intent: "login", pin }) });
-      window.location.reload();
+      window.location.replace("/cafe-pos");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo iniciar sesión.");
       setPin("");
@@ -209,6 +237,7 @@ function Login() {
     <div className="cafe-brand-mark">C</div>
     <h1>Cohen&apos;s Cafe</h1>
     <p>Ingresa tu PIN personal para abrir la caja.</p>
+    {sessionExpired ? <div className="status status-warning">La sesión anterior terminó. Ingresa tu PIN para continuar.</div> : null}
     <label className="field">PIN<input className="pin-input" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" type="password" autoComplete="current-password" /></label>
     {error ? <div className="status status-error">{error}</div> : null}
     <button className="btn btn-primary btn-wide" disabled={pending || pin.length < 4}>{pending ? "Entrando…" : "Entrar"}</button>
@@ -736,10 +765,10 @@ export default function CafePos() {
 
   async function logout() {
     await api("/api/cafe-pos/auth", { method: "POST", body: JSON.stringify({ intent: "logout" }) }).catch(() => undefined);
-    window.location.reload();
+    window.location.replace("/cafe-pos");
   }
 
-  if (!initial.staff) return <Login />;
+  if (!initial.staff) return <Login sessionExpired={initial.sessionExpired} />;
 
   return <div className="cafe-shell">
     <header className="cafe-topbar">

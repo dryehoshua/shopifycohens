@@ -43,6 +43,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return {
       enabled: true as const,
       shop,
+      sessionExpired: new URL(request.url).searchParams.get("session") === "expired",
       staff: session ? { id: session.staff.id, name: session.staff.name, role: session.staff.role } : null,
       shift: session ? await currentRetailShift(shop) : null,
     };
@@ -208,6 +209,8 @@ class ApiError extends Error {
   }
 }
 
+let reloadingForExpiredSession = false;
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -215,16 +218,25 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   });
   const body = (await response.json()) as T & { error?: string; code?: string };
   if (!response.ok) {
+    const code = body.code || "API_ERROR";
+    if (
+      response.status === 401
+      && (code === "AUTH_REQUIRED" || code === "AUTH_EXPIRED")
+      && !reloadingForExpiredSession
+    ) {
+      reloadingForExpiredSession = true;
+      window.location.replace("/retail-pos?session=expired");
+    }
     throw new ApiError(
       body.error || "No se pudo completar la operación.",
       response.status,
-      body.code || "API_ERROR",
+      code,
     );
   }
   return body;
 }
 
-function Login() {
+function Login({ sessionExpired }: { sessionExpired: boolean }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -232,7 +244,7 @@ function Login() {
     event.preventDefault(); setPending(true); setError("");
     try {
       await api("/api/retail-pos/auth", { method: "POST", body: JSON.stringify({ intent: "login", pin }) });
-      window.location.reload();
+      window.location.replace("/retail-pos");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo iniciar sesión."); setPin("");
     } finally { setPending(false); }
@@ -242,6 +254,7 @@ function Login() {
     <span className="retail-kicker">COHEN&apos;S KOSHER &amp; DELI</span>
     <h1>Retail POS</h1>
     <p>Ingresa tu PIN para abrir la tienda.</p>
+    {sessionExpired ? <div className="retail-alert warning">La sesión anterior terminó. Ingresa tu PIN para continuar.</div> : null}
     <label className="retail-field">PIN<input className="retail-pin" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" type="password" autoComplete="current-password" /></label>
     {error ? <div className="retail-alert error">{error}</div> : null}
     <button className="retail-button primary wide" disabled={pending || pin.length < 4}>{pending ? "Entrando…" : "Entrar a tienda"}</button>
@@ -951,10 +964,10 @@ export default function RetailPos() {
 
   async function logout() {
     await api("/api/retail-pos/auth", { method: "POST", body: JSON.stringify({ intent: "logout" }) }).catch(() => undefined);
-    window.location.reload();
+    window.location.replace("/retail-pos");
   }
 
-  if (!initial.staff) return <Login />;
+  if (!initial.staff) return <Login sessionExpired={initial.sessionExpired} />;
 
   return <div className="retail-shell">
     <header className="retail-topbar">

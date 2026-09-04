@@ -31,6 +31,7 @@ import {
 
 const POS_COOKIE = "cohens_cafe_pos";
 const SESSION_HOURS = 12;
+const COOKIE_MAX_AGE_DAYS = 30;
 const loginAttempts = new Map<string, { failures: number; blockedUntil: number }>();
 const managerAttempts = new Map<string, { failures: number; blockedUntil: number }>();
 
@@ -92,7 +93,9 @@ function cookies(request: Request) {
 }
 
 export function sessionCookie(token: string) {
-  const maxAge = SESSION_HOURS * 60 * 60;
+  // The server still expires idle sessions after SESSION_HOURS. A longer-lived
+  // browser token lets an attended POS keep renewing that server-side session.
+  const maxAge = COOKIE_MAX_AGE_DAYS * 24 * 60 * 60;
   return `${POS_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
 }
 
@@ -290,7 +293,14 @@ export async function currentCafeSession(request: Request, required = true) {
     return null;
   }
   if (Date.now() - session.lastSeenAt.getTime() > 5 * 60_000) {
-    await db.cafePosSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } });
+    const now = new Date();
+    await db.cafePosSession.update({
+      where: { id: session.id },
+      data: {
+        lastSeenAt: now,
+        expiresAt: new Date(now.getTime() + SESSION_HOURS * 60 * 60 * 1000),
+      },
+    });
   }
   return session;
 }
