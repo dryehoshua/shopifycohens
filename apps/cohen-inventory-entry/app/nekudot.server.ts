@@ -359,12 +359,20 @@ export async function replaceNekudotCredential(input: {
     }
 
     const activeCredentials = await transaction.nekudotCredential.findMany({
-      where: { memberId: identity.memberId, active: true },
+      where: {
+        memberId: identity.memberId,
+        active: true,
+        kind: { notIn: ["QR", "BARCODE"] },
+      },
       select: { id: true, lastFour: true },
     });
     const revokedAt = new Date();
     await transaction.nekudotCredential.updateMany({
-      where: { memberId: identity.memberId, active: true },
+      where: {
+        memberId: identity.memberId,
+        active: true,
+        kind: { notIn: ["QR", "BARCODE"] },
+      },
       data: {
         active: false,
         revokedAt,

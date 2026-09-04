@@ -17,6 +17,7 @@ import {
   type PosCustomerProfileDraft,
   type PosCustomerRecord,
 } from "../components/PosCustomerProfileEditor";
+import { PosCustomerMembershipManager } from "../components/PosCustomerMembershipManager";
 import { cashbackPercentForTier, type NekudotCardTier } from "../nekudot-domain";
 import { maximumNekudotRedemptionCents } from "../pos-nekudot-money";
 import { printLocalDocument, type LocalPrinterDocument } from "../printer-bridge";
@@ -691,6 +692,13 @@ export default function RetailPos() {
     setIdentityVerified(false);
   }
 
+  function syncCustomerRecord(updated: PosCustomerRecord) {
+    const next = updated as Customer;
+    setCustomers((current) => current.map((item) => item.id === next.id ? next : item));
+    setSelectedCustomer(next);
+    if (customer?.id === next.id) setCustomer(next);
+  }
+
   async function saveCustomerProfile(draft: PosCustomerProfileDraft) {
     let managerPin: string | undefined;
     const changingMembership = Boolean(selectedCustomer?.member && (
@@ -1103,14 +1111,14 @@ export default function RetailPos() {
         <div className="retail-member-scan"><strong>Identificación inmediata por tarjeta</strong><form onSubmit={(event) => { event.preventDefault(); void identifyCredential(credential); }}><input value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Código de barras / QR / NFC" autoComplete="off" /><button disabled={busy || credential.length < 4}>Leer</button></form><NfcBridgeReader onCredential={(value) => { void identifyCredential(value); }} /></div>
         {member ? <div className="retail-selected"><strong>{member.displayName}</strong><span>{formatMoney(member.availableCents)} disponible · Tarjeta {membershipLabel(member)}{member.broker ? ` · Broker ${member.broker.displayName}` : ""}</span></div> : null}
         <button className="retail-button primary wide" type="button" onClick={() => { setSelectedCustomer(null); setCustomerEditorMode("new"); }}>+ Agregar cliente nuevo</button>
-        {customerEditorMode ? <PosCustomerProfileEditor key={`${customerEditorMode}-${selectedCustomer?.id || "new"}`} customer={customerEditorMode === "edit" ? selectedCustomer : null} busy={busy} onCancel={() => setCustomerEditorMode(null)} onSave={saveCustomerProfile} /> : null}
+        {customerEditorMode ? <><PosCustomerProfileEditor key={`${customerEditorMode}-${selectedCustomer?.id || "new"}`} customer={customerEditorMode === "edit" ? selectedCustomer : null} busy={busy} onCancel={() => setCustomerEditorMode(null)} onSave={saveCustomerProfile} />{customerEditorMode === "edit" && selectedCustomer ? <PosCustomerMembershipManager customer={selectedCustomer} endpoint="/api/retail-pos/customers" staffRole={initial.staff?.role} onCustomerUpdated={syncCustomerRecord} onMessage={setMessage} /> : null}</> : null}
         <div className="retail-customer-search-heading"><strong>Clientes de Cohen&apos;s</strong><small>Esta lista pertenece a la tienda Shopify de retail; escribe solo para filtrar</small></div>
         <div className="retail-customer-search"><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Filtrar por nombre, teléfono o correo…" /></div>
-        <div className="retail-customer-results">{visibleCustomers.map((item) => <button key={item.id} className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item)}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
+        <div className="retail-customer-results">{visibleCustomers.map((item) => <button key={item.id} title="Doble clic para abrir todos sus datos y tarjetas" className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item)} onDoubleClick={() => { chooseCustomer(item); setCustomerEditorMode("edit"); }}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
         {customersLoading ? <div className="retail-empty compact"><strong>Cargando clientes…</strong></div> : null}
         {customersLoaded && !customersLoading && !visibleCustomers.length ? <div className="retail-empty compact"><strong>No encontramos coincidencias</strong><span>Prueba otro nombre, teléfono o correo.</span></div> : null}
         {selectedCustomer && !customerEditorMode ? <section className="retail-customer-profile">
-          <div className="retail-customer-profile-head"><span className="retail-customer-avatar large">{selectedCustomer.displayName.slice(0, 2).toUpperCase()}</span><div><span className="retail-kicker">CLIENTE SELECCIONADO</span><h3>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p></div></div>
+          <div className="retail-customer-profile-head"><span className="retail-customer-avatar large">{selectedCustomer.displayName.slice(0, 2).toUpperCase()}</span><div><span className="retail-kicker">CLIENTE SELECCIONADO</span><h3 title="Doble clic para editar perfil y tarjetas" onDoubleClick={() => setCustomerEditorMode("edit")}>{selectedCustomer.displayName}</h3><p>{selectedCustomer.phone || "Sin teléfono"} · {selectedCustomer.email || "Sin correo"}</p></div></div>
           {selectedCustomer.member ? <div className="retail-membership-status active"><strong>Tarjeta {membershipLabel(selectedCustomer.member)}</strong><span>{formatMoney(selectedCustomer.member.availableCents)} disponibles · {selectedCustomer.member.credentialCount} tarjeta(s){selectedCustomer.member.credentialLastFour ? ` · termina ${selectedCustomer.member.credentialLastFour}` : ""}</span></div> : <div className="retail-membership-status"><strong>Aún no tiene tarjeta</strong><span>Al asignarla se crea su wallet compartida con la cafetería.</span></div>}
           {selectedCustomer.address ? <div className="pos-customer-address-summary"><strong>Domicilio de entrega</strong><br />{selectedCustomer.address.address1}{selectedCustomer.address.address2 ? `, ${selectedCustomer.address.address2}` : ""}<br />{[selectedCustomer.address.city, selectedCustomer.address.province, selectedCustomer.address.zip].filter(Boolean).join(", ")}{selectedCustomer.profile?.deliveryInstructions ? <><br /><em>{selectedCustomer.profile.deliveryInstructions}</em></> : null}</div> : <div className="retail-membership-status"><strong>Sin domicilio de entrega</strong><span>Puedes agregarlo al editar los datos.</span></div>}
           <div className="pos-customer-profile-actions"><button className="retail-button primary" onClick={() => selectCustomerForSale(selectedCustomer)}>Usar en la venta</button><button className="retail-button secondary" type="button" onClick={() => setCustomerEditorMode("edit")}>Editar todos sus datos</button></div>

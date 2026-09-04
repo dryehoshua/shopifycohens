@@ -1,4 +1,5 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import { randomUUID } from "node:crypto";
 import db from "./db.server";
 import { unauthenticated } from "./shopify.server";
 import {
@@ -17,7 +18,9 @@ import {
   normalizeCafeCustomerProfile,
   type CafeCustomerProfileInput,
 } from "./cafe-customer-profile-domain";
-import { cashbackBasisPointsForTier, NEKUDOT_PROGRAM_KEY } from "./nekudot-domain";
+import { cashbackBasisPointsForTier, NEKUDOT_PROGRAM_KEY, normalizeBrokerCode } from "./nekudot-domain";
+import { memberCardData } from "./nekudot-registration.server";
+import { resolvePosMembershipAssignment } from "./pos-membership-profile.server";
 
 type PosSurface = "CAFE" | "RETAIL";
 
@@ -225,9 +228,17 @@ async function customerById(surface: PosSurface, admin: AdminApiContext, custome
 
 async function activeBroker(surface: PosSurface, code: string | null) {
   if (!code) return null;
-  const broker = await db.nekudotBroker.findUnique({
-    where: { programKey_code: { programKey: NEKUDOT_PROGRAM_KEY, code } },
+  const brokers = await db.nekudotBroker.findMany({
+    where: {
+      programKey: NEKUDOT_PROGRAM_KEY,
+      active: true,
+    },
+    select: { id: true, code: true, displayName: true, referralWord: true, active: true },
   });
+  const normalized = code.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
+  const broker = brokers.find((candidate) => candidate.code.toLocaleLowerCase("es-MX") === normalized
+    || candidate.referralWord?.normalize("NFKC").trim().toLocaleLowerCase("es-MX") === normalized
+    || (candidate.referralWord ? normalizeBrokerCode(candidate.referralWord) === code : false));
   if (!broker?.active) {
     throw posError(surface, "La clave de afiliación Blue no es válida o ya no está activa.", 409, "BLUE_AFFILIATION_INVALID");
   }
@@ -476,4 +487,329 @@ export function saveCafeCustomerProfile(request: Request, raw: Record<string, un
 
 export function saveRetailCustomerProfile(request: Request, raw: Record<string, unknown>) {
   return savePosCustomerProfile("RETAIL", request, raw);
+}
+
+async function membershipPayload(memberId: string) {
+  const card = await memberCardData(memberId);
+  const credentials = await db.nekudotCredential.findMany({
+    where: { memberId },
+    orderBy: [{ active: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      kind: true,
+      label: true,
+      lastFour: true,
+      active: true,
+      createdAt: true,
+      updatedAt: true,
+      revokedAt: true,
+      revokedReason: true,
+    },
+  });
+  return {
+    id: card.id,
+    displayName: card.displayName,
+    cardTier: card.cardTier,
+    cashbackBasisPoints: cashbackBasisPointsForTier(card.cardTier),
+    availableCents: card.balanceCents - card.reservedCents,
+    balanceCents: card.balanceCents,
+    reservedCents: card.reservedCents,
+    broker: card.broker ? { displayName: card.broker.displayName, code: card.broker.code } : null,
+    photoUrl: card.photoFileName ? `/nekudot-photo/${card.id}` : null,
+    qrDataUrl: card.qrDataUrl,
+    barcodeDataUrl: card.barcodeDataUrl,
+    cardNumber: card.cardNumber,
+    credentials: credentials.map((credential) => ({
+      ...credential,
+      createdAt: credential.createdAt.toISOString(),
+      updatedAt: credential.updatedAt.toISOString(),
+      revokedAt: credential.revokedAt?.toISOString() || null,
+      removable: !new Set(["QR", "BARCODE"]).has(credential.kind),
+    })),
+  };
+}
+
+async function membershipDetails(surface: PosSurface, request: Request, rawCustomerId: unknown) {
+  const { shop, admin } = await posContext(surface, request);
+  const customerId = String(rawCustomerId ?? "").trim();
+  if (!/^gid:\/\/shopify\/Customer\/\d+$/.test(customerId)) {
+    throw posError(surface, "El cliente de Shopify no es válido.");
+  }
+  const customer = await customerById(surface, admin, customerId);
+  const identity = await customerIdentity(shop, customerId);
+  if (!identity) return { customer: customerResult(customer), membership: null };
+  return {
+    customer: customerResult(customer, identity.member),
+    membership: await membershipPayload(identity.memberId),
+  };
+}
+
+const MEMBERSHIP_TAGS = [
+  "NEKUDOT_PLATA",
+  "NEKUDOT_BLUE",
+  "NEKUDOT_GOLDEN",
+  "NEKUDOT_GOLDEN_PENDIENTE",
+  "NEKUDOT_GOLDEN_INACTIVA",
+  "NEKUDOT_VALES",
+];
+
+function membershipTag(cardTier: string) {
+  if (cardTier === "BLUE") return "NEKUDOT_BLUE";
+  if (cardTier === "GOLDEN") return "NEKUDOT_GOLDEN";
+  if (cardTier === "VOUCHER") return "NEKUDOT_VALES";
+  return "NEKUDOT_PLATA";
+}
+
+async function syncShopifyMembership(
+  surface: PosSurface,
+  admin: AdminApiContext,
+  customer: ShopifyCustomer,
+  input: { cardTier: string; community: string | null; broker: { code: string } | null; updatedBy: string },
+) {
+  const saved = storedProfile(customer.posProfile?.value);
+  const profileValue = JSON.stringify({
+    version: 1,
+    community: input.community ?? saved.community,
+    cardTier: input.cardTier,
+    blueAffiliationCode: input.cardTier === "BLUE" ? input.broker?.code || null : null,
+    deliveryInstructions: saved.deliveryInstructions,
+    updatedAt: new Date().toISOString(),
+    updatedBy: input.updatedBy,
+  });
+  const updated = await graphql<{
+    customerUpdate: { customer: { id: string } | null; userErrors: Array<{ field?: string[]; message: string }> };
+  }>(surface, admin, `#graphql
+    mutation PosMembershipCustomerUpdate($input: CustomerInput!) {
+      customerUpdate(input: $input) { customer { id } userErrors { field message } }
+    }
+  `, {
+    input: {
+      id: customer.id,
+      metafields: [{ namespace: "cohens", key: "pos_profile", type: "json", value: profileValue }],
+    },
+  });
+  mutationErrors(surface, updated.customerUpdate.userErrors);
+
+  const removed = await graphql<{
+    tagsRemove: { userErrors: Array<{ field?: string[]; message: string }> };
+  }>(surface, admin, `#graphql
+    mutation PosMembershipTagsRemove($id: ID!, $tags: [String!]!) {
+      tagsRemove(id: $id, tags: $tags) { userErrors { field message } }
+    }
+  `, { id: customer.id, tags: MEMBERSHIP_TAGS });
+  mutationErrors(surface, removed.tagsRemove.userErrors);
+  const added = await graphql<{
+    tagsAdd: { userErrors: Array<{ field?: string[]; message: string }> };
+  }>(surface, admin, `#graphql
+    mutation PosMembershipTagsAdd($id: ID!, $tags: [String!]!) {
+      tagsAdd(id: $id, tags: $tags) { userErrors { field message } }
+    }
+  `, {
+    id: customer.id,
+    tags: [membershipTag(input.cardTier), "NEKUDOT_ACTIVO", surface === "CAFE" ? "cohens-cafe" : "cohens-retail"],
+  });
+  mutationErrors(surface, added.tagsAdd.userErrors);
+}
+
+async function activateMembership(surface: PosSurface, request: Request, raw: Record<string, unknown>) {
+  const authorization = await requirePosManager(surface, request, raw.managerPin);
+  const { shop, admin } = await posContext(surface, request);
+  const customerId = String(raw.customerId ?? "").trim();
+  if (!/^gid:\/\/shopify\/Customer\/\d+$/.test(customerId)) {
+    throw posError(surface, "El cliente de Shopify no es válido.");
+  }
+  const customer = await customerById(surface, admin, customerId);
+  let assignment;
+  try {
+    assignment = await resolvePosMembershipAssignment(raw);
+  } catch (error) {
+    throw posError(surface, error instanceof Error ? error.message : "Los datos de la membresía no son válidos.");
+  }
+  const email = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || null;
+  const phone = customer.defaultPhoneNumber?.phoneNumber?.trim() || assignment.phone;
+
+  const member = await db.$transaction(async (transaction) => {
+    const existingIdentity = await transaction.nekudotCustomerIdentity.findUnique({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
+      include: { member: true },
+    });
+    let memberId = existingIdentity?.memberId || null;
+    if (!memberId && (phone || email)) {
+      const contactMatches = [
+        ...(phone ? [{ phone }] : []),
+        ...(email ? [{ email }] : []),
+      ];
+      const matches = await transaction.nekudotMember.findMany({
+        where: {
+          programKey: NEKUDOT_PROGRAM_KEY,
+          active: true,
+          OR: contactMatches,
+        },
+        include: { identities: true },
+        take: 3,
+      });
+      if (matches.length > 1) {
+        throw posError(surface, "Hay más de una membresía con esos datos. Identifica al cliente con su tarjeta para evitar unir cuentas incorrectas.", 409, "MEMBER_AMBIGUOUS");
+      }
+      const match = matches[0];
+      const conflictingIdentity = match?.identities.find((identity) => identity.shop === shop && identity.shopifyCustomerId !== customerId);
+      if (conflictingIdentity) {
+        throw posError(surface, "Esa membresía ya está ligada a otro cliente de esta tienda.", 409, "SHOP_IDENTITY_CONFLICT");
+      }
+      memberId = match?.id || null;
+    }
+    if (!memberId) {
+      memberId = (await transaction.nekudotMember.create({
+        data: {
+          programKey: NEKUDOT_PROGRAM_KEY,
+          displayName: customer.displayName || "Cliente sin nombre",
+          email,
+          phone,
+          community: assignment.community,
+          cardTier: assignment.cardTier,
+          brokerId: assignment.brokerId,
+          enrollmentStatus: "ACTIVE",
+          active: true,
+        },
+      })).id;
+    }
+    const otherIdentity = await transaction.nekudotCustomerIdentity.findUnique({
+      where: { memberId_shop: { memberId, shop } },
+    });
+    if (otherIdentity && otherIdentity.shopifyCustomerId !== customerId) {
+      throw posError(surface, "Esa membresía ya está ligada a otro cliente de esta tienda.", 409, "SHOP_IDENTITY_CONFLICT");
+    }
+    const updatedMember = await transaction.nekudotMember.update({
+      where: { id: memberId },
+      data: {
+        displayName: customer.displayName || "Cliente sin nombre",
+        email,
+        phone,
+        community: assignment.community,
+        cardTier: assignment.cardTier,
+        brokerId: assignment.brokerId,
+        enrollmentStatus: "ACTIVE",
+        active: true,
+      },
+    });
+    await transaction.nekudotCustomerIdentity.upsert({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
+      create: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        memberId,
+        shop,
+        shopifyCustomerId: customerId,
+        shopifyLegacyCustomerId: String(customer.legacyResourceId),
+        displayName: customer.displayName || "Cliente sin nombre",
+        email,
+      },
+      update: {
+        memberId,
+        shopifyLegacyCustomerId: String(customer.legacyResourceId),
+        displayName: customer.displayName || "Cliente sin nombre",
+        email,
+      },
+    });
+    return updatedMember;
+  });
+
+  await syncShopifyMembership(surface, admin, customer, {
+    cardTier: member.cardTier,
+    community: member.community,
+    broker: assignment.broker,
+    updatedBy: authorization.session.staff.name,
+  });
+  return membershipDetails(surface, request, customerId);
+}
+
+async function removeCredential(surface: PosSurface, request: Request, raw: Record<string, unknown>) {
+  const authorization = await requirePosManager(surface, request, raw.managerPin);
+  const { shop } = await posContext(surface, request);
+  const customerId = String(raw.customerId ?? "").trim();
+  const credentialId = String(raw.credentialId ?? "").trim();
+  const identity = await customerIdentity(shop, customerId);
+  if (!identity) throw posError(surface, "Este cliente todavía no tiene Nekudot activo.", 404, "MEMBER_NOT_FOUND");
+  const credential = await db.nekudotCredential.findFirst({
+    where: { id: credentialId, memberId: identity.memberId },
+  });
+  if (!credential) throw posError(surface, "La tarjeta no pertenece a este cliente.", 404, "CREDENTIAL_NOT_FOUND");
+  if (new Set(["QR", "BARCODE"]).has(credential.kind)) {
+    throw posError(surface, "El QR y el código de barras digitales no se eliminan; son identificadores fijos de la membresía.", 409, "DIGITAL_CREDENTIAL_FIXED");
+  }
+  if (credential.active) {
+    const revokedAt = new Date();
+    await db.$transaction([
+      db.nekudotCredential.update({
+        where: { id: credential.id },
+        data: { active: false, revokedAt, revokedReason: "REMOVED_IN_POS", revokedByShop: shop },
+      }),
+      db.nekudotLedgerEntry.create({
+        data: {
+          programKey: NEKUDOT_PROGRAM_KEY,
+          memberId: identity.memberId,
+          walletType: "CLIENT",
+          type: "CREDENTIAL_REMOVED",
+          amountCents: 0,
+          balanceAfterCents: identity.member.balanceCents,
+          currencyCode: identity.member.currencyCode,
+          shop,
+          source: "ADMIN",
+          sourceId: credential.id,
+          idempotencyKey: `credential-removal:${randomUUID()}`,
+          description: `Tarjeta terminación ${credential.lastFour} eliminada por ${authorization.session.staff.name}`,
+          metadata: { credentialId: credential.id, lastFour: credential.lastFour },
+        },
+      }),
+    ]);
+  }
+  return membershipDetails(surface, request, customerId);
+}
+
+async function syncAssignedMembership(surface: PosSurface, request: Request, rawCustomerId: unknown) {
+  const { session, shop, admin } = await posContext(surface, request);
+  const customerId = String(rawCustomerId ?? "").trim();
+  const customer = await customerById(surface, admin, customerId);
+  const identity = await customerIdentity(shop, customerId);
+  if (!identity?.member.active) {
+    throw posError(surface, "No se pudo confirmar la membresía asignada.", 409, "MEMBER_NOT_FOUND");
+  }
+  await syncShopifyMembership(surface, admin, customer, {
+    cardTier: identity.member.cardTier,
+    community: identity.member.community,
+    broker: identity.member.broker,
+    updatedBy: session.staff.name,
+  });
+  return membershipDetails(surface, request, customerId);
+}
+
+export function getCafeCustomerMembership(request: Request, customerId: unknown) {
+  return membershipDetails("CAFE", request, customerId);
+}
+
+export function getRetailCustomerMembership(request: Request, customerId: unknown) {
+  return membershipDetails("RETAIL", request, customerId);
+}
+
+export function activateCafeCustomerMembership(request: Request, raw: Record<string, unknown>) {
+  return activateMembership("CAFE", request, raw);
+}
+
+export function activateRetailCustomerMembership(request: Request, raw: Record<string, unknown>) {
+  return activateMembership("RETAIL", request, raw);
+}
+
+export function removeCafeCustomerCredential(request: Request, raw: Record<string, unknown>) {
+  return removeCredential("CAFE", request, raw);
+}
+
+export function removeRetailCustomerCredential(request: Request, raw: Record<string, unknown>) {
+  return removeCredential("RETAIL", request, raw);
+}
+
+export function syncCafeAssignedMembership(request: Request, customerId: unknown) {
+  return syncAssignedMembership("CAFE", request, customerId);
+}
+
+export function syncRetailAssignedMembership(request: Request, customerId: unknown) {
+  return syncAssignedMembership("RETAIL", request, customerId);
 }

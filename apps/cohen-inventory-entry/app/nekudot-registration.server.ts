@@ -259,7 +259,13 @@ async function brokerForInviteCode(value: unknown) {
   const raw = String(value || "").trim();
   if (!raw) throw new RegistrationError("Escribe el código que te proporcionó tu IB.");
   const code = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const broker = await db.nekudotBroker.findUnique({ where: { programKey_code: { programKey: NEKUDOT_PROGRAM_KEY, code } } });
+  const candidates = await db.nekudotBroker.findMany({
+    where: { programKey: NEKUDOT_PROGRAM_KEY, active: true },
+    select: { id: true, displayName: true, email: true, phone: true, code: true, referralWord: true, active: true },
+  });
+  const normalizedWord = raw.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
+  const broker = candidates.find((candidate) => candidate.code === code
+    || candidate.referralWord?.normalize("NFKC").trim().toLocaleLowerCase("es-MX") === normalizedWord);
   if (!broker?.active) throw new RegistrationError("El código de IB no es válido o ya no está activo.", 403);
   return broker;
 }
@@ -404,8 +410,8 @@ async function customerById(admin: AdminApiContext, customerId: string) {
   return data.customer;
 }
 
-async function registrationCandidates(admin: AdminApiContext, email: string, phone: string, displayName: string) {
-  const queries = [`email:${JSON.stringify(email)}`, `phone:${JSON.stringify(phone)}`, `name:${JSON.stringify(displayName)}`];
+async function registrationCandidates(admin: AdminApiContext, email: string, phone: string) {
+  const queries = [`email:${JSON.stringify(email)}`, `phone:${JSON.stringify(phone)}`];
   const customers = new Map<string, ShopifyCustomer>();
   for (const query of queries) {
     const data = await graphql<{ customers: { nodes: ShopifyCustomer[] } }>(admin, `#graphql
@@ -417,12 +423,10 @@ async function registrationCandidates(admin: AdminApiContext, email: string, pho
     `, { query });
     for (const customer of data.customers.nodes) customers.set(customer.id, customer);
   }
-  const normalizedName = displayName.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
   return [...customers.values()].filter((customer) => {
     const candidateEmail = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase();
     const candidatePhone = customer.defaultPhoneNumber?.phoneNumber?.replace(/\D/g, "");
-    const candidateName = customer.displayName.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
-    return candidateEmail === email || candidatePhone === phone.replace(/\D/g, "") || candidateName === normalizedName;
+    return candidateEmail === email || candidatePhone === phone.replace(/\D/g, "");
   }).slice(0, 5);
 }
 
@@ -514,7 +518,6 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
   const phone = phoneFromFormData(formData);
-  const displayName = `${firstName} ${lastName}`;
   const ibCode = kind === "blue" ? String(formData.get("ibCode") || "").trim().slice(0, 40) : "";
   const shop = registrationShop();
 
@@ -523,13 +526,13 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
       programKey: NEKUDOT_PROGRAM_KEY,
       active: true,
       phone: { not: null },
-      OR: [{ phone }, { email }, { displayName }],
+      OR: [{ phone }, { email }],
     },
     orderBy: { updatedAt: "desc" },
     take: 5,
   });
   const { admin } = await unauthenticated.admin(shop);
-  const shopifyCandidates = await registrationCandidates(admin, email, phone, displayName);
+  const shopifyCandidates = await registrationCandidates(admin, email, phone);
   const linkedCustomerIds = new Set((await db.nekudotCustomerIdentity.findMany({
     where: { shop, shopifyCustomerId: { in: shopifyCandidates.map((customer) => customer.id) } },
     select: { shopifyCustomerId: true },

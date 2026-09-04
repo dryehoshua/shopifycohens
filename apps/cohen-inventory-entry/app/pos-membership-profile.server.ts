@@ -24,10 +24,16 @@ export async function resolvePosMembershipAssignment(input: {
     const rawCode = String(input.blueAffiliationCode ?? "").trim();
     if (!rawCode) throw new Error("Escribe la clave de afiliación para la tarjeta Blue.");
     const code = normalizeBrokerCode(rawCode);
-    const match = await db.nekudotBroker.findUnique({
-      where: { programKey_code: { programKey: NEKUDOT_PROGRAM_KEY, code } },
-      select: { id: true, code: true, displayName: true, active: true },
+    const candidates = await db.nekudotBroker.findMany({
+      where: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        active: true,
+      },
+      select: { id: true, code: true, displayName: true, referralWord: true, active: true },
     });
+    const normalizedWord = rawCode.normalize("NFKC").trim().toLocaleLowerCase("es-MX");
+    const match = candidates.find((candidate) => candidate.code === code
+      || candidate.referralWord?.normalize("NFKC").trim().toLocaleLowerCase("es-MX") === normalizedWord);
     if (!match?.active) throw new Error("La clave de afiliación Blue no es válida o ya no está activa.");
     broker = match;
   }

@@ -15,8 +15,42 @@
 .pos-customer-editor__save:disabled { cursor: not-allowed; opacity: .5; }
 .pos-customer-address-summary { margin: 10px 0; padding: 10px; border-radius: 10px; background: white; color: #58463c; font-size: 13px; line-height: 1.5; }
 .pos-customer-profile-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.pos-membership-manager { margin: 14px 0; padding: 16px; border: 1px solid #a9c6b5; border-radius: 14px; background: #f5fbf7; color: #24362c; }
+.pos-membership-manager__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pos-membership-manager__header span { color: #26744c; font-size: 11px; font-weight: 900; letter-spacing: .09em; }
+.pos-membership-manager__header h3 { margin: 3px 0 0; }
+.pos-membership-manager__header > strong { color: #26744c; }
+.pos-membership-loading, .pos-membership-error { padding: 12px; border-radius: 10px; background: #e7eefb; color: #244d86; }
+.pos-membership-error { margin: 10px 0; background: #ffe8e6; color: #9b2c27; }
+.pos-membership-activation p { line-height: 1.45; }
+.pos-membership-activation > button, .pos-membership-add-card > button { width: 100%; margin-top: 12px; border: 0; border-radius: 10px; padding: 13px; background: #26744c; color: white; cursor: pointer; font-weight: 900; }
+.pos-membership-activation > button:disabled, .pos-membership-add-card > button:disabled { opacity: .5; cursor: not-allowed; }
+.pos-membership-card { margin: 14px 0; padding: 14px; border-radius: 14px; background: linear-gradient(140deg, #20362d, #43795e); color: white; }
+.pos-membership-identity { display: flex; align-items: center; gap: 10px; }
+.pos-membership-identity > img, .pos-membership-identity > div { width: 54px; height: 54px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: #d9b66e; color: #2b2118; font-weight: 900; }
+.pos-membership-identity span { display: grid; gap: 3px; }
+.pos-membership-codes { display: grid; grid-template-columns: minmax(100px, .45fr) minmax(180px, 1fr); gap: 12px; align-items: center; margin-top: 14px; }
+.pos-membership-codes figure { margin: 0; padding: 9px; border-radius: 10px; background: white; color: #2d211b; text-align: center; overflow: hidden; }
+.pos-membership-codes img { display: block; width: 100%; max-height: 120px; object-fit: contain; }
+.pos-membership-codes .barcode img { max-height: 82px; }
+.pos-membership-codes figcaption { margin-top: 5px; font-size: 11px; overflow-wrap: anywhere; }
+.pos-credential-list { display: grid; gap: 8px; }
+.pos-credential-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 11px; border: 1px solid #cfe1d6; border-radius: 10px; background: white; }
+.pos-credential-list article > div { display: grid; gap: 2px; min-width: 0; }
+.pos-credential-list article span, .pos-credential-list article small { color: #647269; font-size: 12px; }
+.pos-credential-list article > b { padding: 4px 7px; border-radius: 999px; background: #dff3e6; color: #26744c; font-size: 10px; }
+.pos-credential-list article.revoked { opacity: .72; }
+.pos-credential-list article.revoked > b { background: #eee9e3; color: #71675f; }
+.pos-credential-list article > button { grid-column: 1 / -1; border: 0; border-radius: 8px; padding: 8px; background: #f8dfdc; color: #a12d28; cursor: pointer; font-weight: 800; }
+.pos-membership-add-card { margin-top: 14px; padding-top: 4px; border-top: 1px solid #cfe1d6; display: grid; gap: 9px; }
+.pos-membership-add-card > label:not(.pos-membership-check) { display: grid; gap: 5px; font-size: 13px; font-weight: 750; }
+.pos-membership-add-card input:not([type="checkbox"]) { min-width: 0; width: 100%; border: 1px solid #b9c9bf; border-radius: 10px; padding: 11px; font: inherit; }
+.pos-membership-check { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.pos-membership-check.warning { color: #a23b2e; font-weight: 800; }
+.pos-membership-add-card > small { color: #647269; line-height: 1.4; }
 
 @media (max-width: 560px) {
   .pos-customer-form-grid, .pos-customer-profile-actions { grid-template-columns: 1fr; }
   .pos-customer-form-grid__wide { grid-column: auto; }
+  .pos-membership-codes { grid-template-columns: 1fr; }
 }
