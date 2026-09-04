@@ -5,6 +5,18 @@ import {
 } from "../nekudot-domain";
 import "../pos-customer-profile.css";
 
+const MEXICO_STATES = [
+  ["AGS", "Aguascalientes"], ["BCN", "Baja California"], ["BCS", "Baja California Sur"],
+  ["CAM", "Campeche"], ["CHP", "Chiapas"], ["CHH", "Chihuahua"], ["CMX", "Ciudad de México"],
+  ["COA", "Coahuila"], ["COL", "Colima"], ["DUR", "Durango"], ["GUA", "Guanajuato"],
+  ["GRO", "Guerrero"], ["HID", "Hidalgo"], ["JAL", "Jalisco"], ["MEX", "Estado de México"],
+  ["MIC", "Michoacán"], ["MOR", "Morelos"], ["NAY", "Nayarit"], ["NLE", "Nuevo León"],
+  ["OAX", "Oaxaca"], ["PUE", "Puebla"], ["QUE", "Querétaro"], ["ROO", "Quintana Roo"],
+  ["SLP", "San Luis Potosí"], ["SIN", "Sinaloa"], ["SON", "Sonora"], ["TAB", "Tabasco"],
+  ["TAM", "Tamaulipas"], ["TLA", "Tlaxcala"], ["VER", "Veracruz"], ["YUC", "Yucatán"],
+  ["ZAC", "Zacatecas"],
+] as const;
+
 export type PosCustomerAddress = {
   id: string;
   firstName: string;
@@ -70,7 +82,7 @@ function initialDraft(customer: PosCustomerRecord | null): PosCustomerProfileDra
     address1: customer?.address?.address1 || "",
     address2: customer?.address?.address2 || "",
     city: customer?.address?.city || "",
-    province: customer?.address?.province || "",
+    province: customer?.address?.provinceCode || customer?.address?.province || "",
     zip: customer?.address?.zip || "",
     countryCode: customer?.address?.countryCode || "MX",
     addressPhone: customer?.address?.phone || customer?.phone || "",
@@ -119,7 +131,7 @@ export function PosCustomerProfileEditor({
       <label className="pos-customer-form-grid__wide">Calle y número<input value={draft.address1} onChange={(event) => update("address1", event.target.value)} placeholder="Calle, número exterior" maxLength={180} /></label>
       <label className="pos-customer-form-grid__wide">Interior, colonia o referencia corta<input value={draft.address2} onChange={(event) => update("address2", event.target.value)} maxLength={180} /></label>
       <label>Ciudad o alcaldía<input value={draft.city} onChange={(event) => update("city", event.target.value)} maxLength={100} /></label>
-      <label>Estado<input value={draft.province} onChange={(event) => update("province", event.target.value)} maxLength={100} /></label>
+      <label>Estado o provincia{draft.countryCode === "MX" ? <select value={draft.province} onChange={(event) => update("province", event.target.value)}><option value="">Selecciona el estado…</option>{MEXICO_STATES.map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select> : <input value={draft.province} onChange={(event) => update("province", event.target.value.toUpperCase())} placeholder="Código de provincia" maxLength={10} />}</label>
       <label>Código postal<input value={draft.zip} onChange={(event) => update("zip", event.target.value)} inputMode="numeric" maxLength={20} /></label>
       <label>País (código)<input value={draft.countryCode} onChange={(event) => update("countryCode", event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2))} placeholder="MX" maxLength={2} /></label>
       <label className="pos-customer-form-grid__wide">Teléfono para la entrega<input value={draft.addressPhone} onChange={(event) => update("addressPhone", event.target.value)} inputMode="tel" /></label>

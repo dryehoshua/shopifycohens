@@ -320,7 +320,7 @@ function shopifyAddressInput(profile: CafeCustomerProfileInput) {
     address1: profile.address.address1,
     address2: profile.address.address2,
     city: profile.address.city,
-    province: profile.address.province,
+    provinceCode: profile.address.province,
     zip: profile.address.zip,
     countryCode: profile.address.countryCode,
     phone: profile.address.phone,
