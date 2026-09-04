@@ -88,6 +88,7 @@ export function normalizeCafeCustomerProfile(input: Record<string, unknown>): Ca
     throw new Error("Escribe un correo electrónico válido.");
   }
   const phone = normalizeCafeCustomerPhone(input.phone);
+  if (!phone) throw new Error("El teléfono del cliente es obligatorio.");
 
   const address1 = text(input.address1, 180);
   const address2 = text(input.address2, 180) || null;

@@ -119,8 +119,8 @@ export function PosCustomerProfileEditor({
     <div className="pos-customer-form-grid">
       <label>Nombre<input value={draft.firstName} onChange={(event) => update("firstName", event.target.value)} required maxLength={60} /></label>
       <label>Apellidos<input value={draft.lastName} onChange={(event) => update("lastName", event.target.value)} maxLength={80} /></label>
-      <label>Teléfono<input value={draft.phone} onChange={(event) => update("phone", event.target.value)} inputMode="tel" placeholder="55 1234 5678" /></label>
-      <label>Correo<input value={draft.email} onChange={(event) => update("email", event.target.value)} inputMode="email" type="email" placeholder="cliente@ejemplo.com" /></label>
+      <label>Teléfono (obligatorio)<input value={draft.phone} onChange={(event) => update("phone", event.target.value)} inputMode="tel" placeholder="55 1234 5678" required /></label>
+      <label>Correo (opcional)<input value={draft.email} onChange={(event) => update("email", event.target.value)} inputMode="email" type="email" placeholder="cliente@ejemplo.com" /></label>
       <label>Comunidad<select value={draft.community} onChange={(event) => update("community", event.target.value)}><option value="">Sin especificar</option>{NEKUDOT_COMMUNITIES.map((community) => <option value={community} key={community}>{community}</option>)}</select></label>
       <label>Tipo de tarjeta<select value={draft.cardTier} onChange={(event) => update("cardTier", event.target.value as NekudotCardTier | "")}><option value="">Sin membresía todavía</option><option value="SILVER">Silver · 2%</option><option value="BLUE">Blue · 5%</option><option value="GOLDEN">Golden · 8%</option><option value="VOUCHER">Vales · sin cashback</option></select></label>
       {draft.cardTier === "BLUE" ? <label className="pos-customer-form-grid__wide">Clave de afiliación Blue<input value={draft.blueAffiliationCode} onChange={(event) => update("blueAffiliationCode", event.target.value)} placeholder="Código proporcionado por el IB" maxLength={40} /></label> : null}
@@ -139,6 +139,6 @@ export function PosCustomerProfileEditor({
     </div>
 
     <div className="pos-customer-editor__notice">La dirección se guarda en la tienda Shopify de esta POS. Nekudot conserva la membresía compartida entre tiendas.</div>
-    <button className="pos-customer-editor__save" type="button" disabled={busy || draft.firstName.trim().length < 2} onClick={() => void onSave(draft)}>{busy ? "Guardando…" : customer ? "Guardar cambios" : "Crear cliente"}</button>
+    <button className="pos-customer-editor__save" type="button" disabled={busy || draft.firstName.trim().length < 2 || draft.phone.replace(/\D/g, "").length < 10} onClick={() => void onSave(draft)}>{busy ? "Guardando…" : customer ? "Guardar cambios" : "Crear cliente"}</button>
   </section>;
 }

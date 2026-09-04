@@ -44,13 +44,13 @@ test("normaliza teléfono mexicano y perfil completo de entrega", () => {
   });
 });
 
-test("permite un cliente sin dirección ni membresía", () => {
-  assert.deepEqual(normalizeCafeCustomerProfile({ firstName: "Sara" }), {
+test("permite un cliente sin correo, dirección ni membresía cuando tiene teléfono", () => {
+  assert.deepEqual(normalizeCafeCustomerProfile({ firstName: "Sara", phone: "55 9876 5432" }), {
     customerId: null,
     firstName: "Sara",
     lastName: "",
     email: null,
-    phone: null,
+    phone: "+525598765432",
     address: null,
     community: null,
     cardTier: null,
@@ -61,7 +61,8 @@ test("permite un cliente sin dirección ni membresía", () => {
 
 test("rechaza correo, teléfono y dirección incompletos", () => {
   assert.throws(() => normalizeCafeCustomerProfile({ firstName: "A" }), /nombre/);
+  assert.throws(() => normalizeCafeCustomerProfile({ firstName: "Sara" }), /teléfono.*obligatorio/);
   assert.throws(() => normalizeCafeCustomerProfile({ firstName: "Sara", email: "sara@" }), /correo/);
   assert.throws(() => normalizeCafeCustomerProfile({ firstName: "Sara", phone: "123" }), /teléfono/);
-  assert.throws(() => normalizeCafeCustomerProfile({ firstName: "Sara", city: "México" }), /calle y número/);
+  assert.throws(() => normalizeCafeCustomerProfile({ firstName: "Sara", phone: "55 9876 5432", city: "México" }), /calle y número/);
 });

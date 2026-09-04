@@ -95,6 +95,14 @@ function cleanText(value: unknown, label: string, max = 100) {
   return result;
 }
 
+function optionalRegistrationEmail(value: unknown) {
+  const email = String(value || "").trim().toLowerCase().slice(0, 180);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new RegistrationError("Escribe un correo electrónico válido o deja el campo vacío.");
+  }
+  return email || null;
+}
+
 function registrationCommunity(value: unknown) {
   try {
     return normalizeNekudotCommunity(value);
@@ -380,18 +388,26 @@ async function savePhoto(memberId: string, value: FormDataEntryValue | null) {
   return fileName;
 }
 
-async function findCustomer(admin: AdminApiContext, email: string, phone: string) {
-  const search = email ? `email:${JSON.stringify(email)}` : `phone:${JSON.stringify(phone)}`;
-  const data = await graphql<{ customers: { nodes: ShopifyCustomer[] } }>(admin, `#graphql
-    query NekudotRegistrationCustomer($query: String!) {
-      customers(first: 5, query: $query) {
-        nodes { id legacyResourceId displayName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } }
+async function findCustomer(admin: AdminApiContext, email: string | null, phone: string) {
+  const queries = [
+    `phone:${JSON.stringify(phone)}`,
+    ...(email ? [`email:${JSON.stringify(email)}`] : []),
+  ];
+  const customers = new Map<string, ShopifyCustomer>();
+  for (const query of queries) {
+    const data = await graphql<{ customers: { nodes: ShopifyCustomer[] } }>(admin, `#graphql
+      query NekudotRegistrationCustomer($query: String!) {
+        customers(first: 5, query: $query) {
+          nodes { id legacyResourceId displayName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } }
+        }
       }
-    }
-  `, { query: search });
-  return data.customers.nodes.find((customer) =>
-    customer.defaultEmailAddress?.emailAddress?.toLowerCase() === email.toLowerCase()
-    || customer.defaultPhoneNumber?.phoneNumber === phone,
+    `, { query });
+    for (const customer of data.customers.nodes) customers.set(customer.id, customer);
+  }
+  const phoneDigits = phone.replace(/\D/g, "");
+  return [...customers.values()].find((customer) =>
+    (email && customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() === email)
+    || customer.defaultPhoneNumber?.phoneNumber?.replace(/\D/g, "") === phoneDigits,
   ) || null;
 }
 
@@ -410,8 +426,8 @@ async function customerById(admin: AdminApiContext, customerId: string) {
   return data.customer;
 }
 
-async function registrationCandidates(admin: AdminApiContext, email: string, phone: string) {
-  const queries = [`email:${JSON.stringify(email)}`, `phone:${JSON.stringify(phone)}`];
+async function registrationCandidates(admin: AdminApiContext, email: string | null, phone: string) {
+  const queries = [`phone:${JSON.stringify(phone)}`, ...(email ? [`email:${JSON.stringify(email)}`] : [])];
   const customers = new Map<string, ShopifyCustomer>();
   for (const query of queries) {
     const data = await graphql<{ customers: { nodes: ShopifyCustomer[] } }>(admin, `#graphql
@@ -426,7 +442,7 @@ async function registrationCandidates(admin: AdminApiContext, email: string, pho
   return [...customers.values()].filter((customer) => {
     const candidateEmail = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase();
     const candidatePhone = customer.defaultPhoneNumber?.phoneNumber?.replace(/\D/g, "");
-    return candidateEmail === email || candidatePhone === phone.replace(/\D/g, "");
+    return (email && candidateEmail === email) || candidatePhone === phone.replace(/\D/g, "");
   }).slice(0, 5);
 }
 
@@ -469,13 +485,13 @@ async function createRegistrationMatches(input: {
       token: `shopify:${recovery.id}`,
       name: maskedName(customer.displayName),
       phone: phone ? maskedPhone(phone) : "Sin teléfono verificable",
-      email: maskedContactEmail(email),
+      email: email ? maskedContactEmail(email) : null,
       cardTier: "CLIENTE_SHOPIFY",
     };
   }));
 }
 
-async function createCustomer(admin: AdminApiContext, input: { firstName: string; lastName: string; email: string; phone: string; tag: string }) {
+async function createCustomer(admin: AdminApiContext, input: { firstName: string; lastName: string; email: string | null; phone: string; tag: string }) {
   const data = await graphql<{
     customerCreate: { customer: ShopifyCustomer | null; userErrors: Array<{ message: string }> };
   }>(admin, `#graphql
@@ -485,7 +501,7 @@ async function createCustomer(admin: AdminApiContext, input: { firstName: string
         userErrors { message }
       }
     }
-  `, { input: { firstName: input.firstName, lastName: input.lastName, email: input.email, phone: input.phone, tags: ["NEKUDOT", input.tag] } });
+  `, { input: { firstName: input.firstName, lastName: input.lastName, ...(input.email ? { email: input.email } : {}), phone: input.phone, tags: ["NEKUDOT", input.tag] } });
   if (data.customerCreate.userErrors.length || !data.customerCreate.customer) {
     throw new RegistrationError(data.customerCreate.userErrors.map((error) => error.message).join("; ") || "No se pudo crear el cliente en Shopify.", 409);
   }
@@ -515,8 +531,7 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   const firstName = cleanText(formData.get("firstName"), "tu nombre", 60);
   const lastName = cleanText(formData.get("lastName"), "tus apellidos", 80);
   const community = registrationCommunity(formData.get("community"));
-  const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
+  const email = optionalRegistrationEmail(formData.get("email"));
   const phone = phoneFromFormData(formData);
   const ibCode = kind === "blue" ? String(formData.get("ibCode") || "").trim().slice(0, 40) : "";
   const shop = registrationShop();
@@ -526,7 +541,7 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
       programKey: NEKUDOT_PROGRAM_KEY,
       active: true,
       phone: { not: null },
-      OR: [{ phone }, { email }],
+      OR: [{ phone }, ...(email ? [{ email }] : [])],
     },
     orderBy: { updatedAt: "desc" },
     take: 5,
@@ -548,7 +563,7 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   });
 
   return {
-    submitted: { firstName, lastName, community, email, phone, ibCode },
+    submitted: { firstName, lastName, community, email: email || "", phone, ibCode },
     matches: [...members.map((member) => ({
       token: existingMemberToken(member.id),
       name: maskedName(member.displayName),
@@ -569,9 +584,11 @@ export async function registerNekudot(formData: FormData, kindValue: unknown, ve
   const firstName = cleanText(formData.get("firstName"), "tu nombre", 60);
   const lastName = cleanText(formData.get("lastName"), "tus apellidos", 80);
   const community = registrationCommunity(formData.get("community"));
-  const email = String(formData.get("email") || "").trim().toLowerCase().slice(0, 180);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RegistrationError("Escribe un correo electrónico válido.");
+  const email = optionalRegistrationEmail(formData.get("email"));
   const phone = phoneFromFormData(formData);
+  if (kind === "golden" && !email) {
+    throw new RegistrationError("Para la membresía Golden sí necesitamos un correo porque Mercado Pago lo exige para la suscripción.");
+  }
   if (formData.get("privacy") !== "yes") throw new RegistrationError("Debes aceptar el aviso de privacidad.");
 
   const shop = registrationShop();
@@ -580,10 +597,8 @@ export async function registerNekudot(formData: FormData, kindValue: unknown, ve
     ? await customerById(admin, verifiedCustomerId)
     : await findCustomer(admin, email, phone);
   if (customer) {
-    const customerEmail = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || "";
-    const customerPhone = customer.defaultPhoneNumber?.phoneNumber?.trim() || "";
-    if (!verifiedCustomerId && (customerEmail !== email || customerPhone !== phone)) {
-      throw new RegistrationError("Ya existe un cliente con parte de estos datos. Entra con el teléfono registrado o solicita ayuda para vincular la cuenta.", 409);
+    if (!verifiedCustomerId) {
+      throw new RegistrationError("Ya existe una cuenta con ese teléfono o correo. Selecciónala en las coincidencias y confirma el código SMS para activarla sin crear un duplicado.", 409);
     }
     const linkedIdentity = await db.nekudotCustomerIdentity.findUnique({
       where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customer.id } },
@@ -636,7 +651,7 @@ export async function registerNekudot(formData: FormData, kindValue: unknown, ve
   const photoFileName = await savePhoto(member.id, formData.get("photo"));
   if (photoFileName) await db.nekudotMember.update({ where: { id: member.id }, data: { photoFileName } });
   await ensureBarcodeCredential(member.id);
-  const checkoutUrl = kind === "golden" ? await createGoldenPayment(member.id, displayName, email) : null;
+  const checkoutUrl = kind === "golden" ? await createGoldenPayment(member.id, displayName, email!) : null;
   return {
     memberId: member.id,
     displayName,

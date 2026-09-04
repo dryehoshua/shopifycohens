@@ -627,6 +627,9 @@ async function activateMembership(surface: PosSurface, request: Request, raw: Re
   }
   const email = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || null;
   const phone = customer.defaultPhoneNumber?.phoneNumber?.trim() || assignment.phone;
+  if (!phone) {
+    throw posError(surface, "Agrega el teléfono del cliente antes de activar Nekudot.", 409, "CUSTOMER_PHONE_REQUIRED");
+  }
 
   const member = await db.$transaction(async (transaction) => {
     const existingIdentity = await transaction.nekudotCustomerIdentity.findUnique({
