@@ -462,6 +462,7 @@ export default function RetailPos() {
   }, [loadCatalog, loadOperations]);
 
   useEffect(() => {
+    if (!initial.staff) return;
     const reportError = (error: unknown) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo actualizar Shopify." });
     void loadData().catch(reportError);
     const catalogInterval = window.setInterval(() => { void loadCatalog().catch(reportError); }, 30_000);
@@ -478,7 +479,7 @@ export default function RetailPos() {
       window.removeEventListener("focus", refreshVisibleCatalog);
       document.removeEventListener("visibilitychange", refreshVisibleCatalog);
     };
-  }, [loadCatalog, loadData, loadOperations]);
+  }, [initial.staff, loadCatalog, loadData, loadOperations]);
 
   useEffect(() => {
     const usb = (navigator as UsbNavigator).usb;
