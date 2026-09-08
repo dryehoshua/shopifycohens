@@ -618,6 +618,7 @@ model NekudotMember {
   membershipPayments NekudotMembershipPayment[]
   ownedBroker        NekudotBroker?             @relation("NekudotBrokerOwner")
   claimedOrders      NekudotPendingClaim[]      @relation("NekudotClaimedMember")
+  communityVoucher  CommunityVoucherWallet?
 
   @@index([programKey, active, updatedAt])
   @@index([brokerId, active])
@@ -677,6 +678,7 @@ model NekudotBroker {
   commissionBalanceCents  Int            @default(0)
   lifetimeCommissionCents Int            @default(0)
   paidOutCents            Int            @default(0)
+  reservedWithdrawalCents Int            @default(0)
   ownerMemberId           String?        @unique
   ownerMember             NekudotMember? @relation("NekudotBrokerOwner", fields: [ownerMemberId], references: [id], onDelete: SetNull)
   createdAt               DateTime       @default(now())
@@ -686,10 +688,73 @@ model NekudotBroker {
   ledger         NekudotLedgerEntry[]
   accruals       NekudotOrderAccrual[]
   portalSessions NekudotBrokerSession[]
+  withdrawalRequests NekudotBrokerWithdrawal[]
 
   @@unique([programKey, code])
   @@unique([programKey, referralWord])
   @@index([programKey, active, displayName])
+}
+
+/// Segundo monedero del cliente, reservado exclusivamente para apoyo comunitario.
+/// No genera cashback, no se puede retirar y nunca se mezcla con Nekudot personales.
+model CommunityVoucherWallet {
+  id                    String         @id @default(cuid())
+  programKey            String         @default("cohens")
+  memberId              String         @unique
+  member                NekudotMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  status                String         @default("ACTIVE")
+  balanceCents          Int            @default(0)
+  reservedCents         Int            @default(0)
+  lifetimeGrantedCents  Int            @default(0)
+  lifetimeRedeemedCents Int            @default(0)
+  activatedAt           DateTime       @default(now())
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  ledger                CommunityVoucherLedgerEntry[]
+
+  @@index([programKey, status, updatedAt])
+}
+
+/// Movimientos auditables de vales: aportación, asignación, consumo y reversión.
+model CommunityVoucherLedgerEntry {
+  id                String                  @id @default(cuid())
+  programKey        String                  @default("cohens")
+  walletId          String
+  wallet            CommunityVoucherWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type              String
+  amountCents       Int
+  balanceAfterCents Int
+  source            String
+  sourceId          String?
+  idempotencyKey    String
+  description       String
+  metadata          Json?
+  occurredAt        DateTime                @default(now())
+  createdAt         DateTime                @default(now())
+
+  @@unique([programKey, idempotencyKey])
+  @@index([walletId, occurredAt])
+  @@index([programKey, source, sourceId])
+}
+
+/// Solicitud del IB para cobrar en efectivo sus Nekudot Gold. El saldo queda
+/// reservado hasta que administración lo pague o rechace.
+model NekudotBrokerWithdrawal {
+  id           String        @id @default(cuid())
+  programKey   String        @default("cohens")
+  brokerId     String
+  broker       NekudotBroker @relation(fields: [brokerId], references: [id], onDelete: Cascade)
+  amountCents  Int
+  status       String        @default("REQUESTED")
+  requestedAt  DateTime      @default(now())
+  processedAt  DateTime?
+  processedBy  String?
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([brokerId, status, requestedAt])
+  @@index([programKey, status, requestedAt])
 }
 
 /// Sesion privada de un IB creada despues de verificar por SMS el telefono

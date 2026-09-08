@@ -7,6 +7,12 @@ declare module './src/AccountPage.jsx' {
 }
 
 //@ts-ignore
+declare module './src/VoucherPage.jsx' {
+  const shopify: import('@shopify/ui-extensions/customer-account.page.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}
+
+//@ts-ignore
 declare module './src/shared.jsx' {
   const shopify: import('@shopify/ui-extensions/customer-account.page.render').Api;
   const globalThis: { shopify: typeof shopify };

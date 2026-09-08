@@ -62,8 +62,8 @@ function registrationHtml() {
       <h1>Activa Nekudot en tu cuenta Cohen's</h1>
       <p>Ya iniciaste sesión. Elige tu tarjeta para conectar tus compras y comenzar a recibir cashback.</p>
       <div class="nk-actions">
-        <a class="nk-button" href="https://cohens-operations-production.up.railway.app/registro/plata">Crear tarjeta Plata</a>
-        <a class="nk-button nk-secondary" href="https://cohens-operations-production.up.railway.app/registro/blue">Activar Blue</a>
+        <a class="nk-button" href="/apps/nekudot/registro/plata">Crear tarjeta Plata</a>
+        <a class="nk-button nk-secondary" href="/apps/nekudot/registro/blue">Activar Blue</a>
       </div>
     </section>
   `);
@@ -147,7 +147,7 @@ function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders:
       ${ledger.length ? ledger.map((entry) => `<div class="nk-ledger-row"><div><strong>${escapeHtml(entry.description)}</strong><div class="nk-order-meta">${escapeHtml(new Date(entry.occurredAt).toLocaleDateString("es-MX"))}</div></div><strong class="${entry.amountCents >= 0 ? "nk-positive" : "nk-negative"}">${entry.amountCents >= 0 ? "+" : ""}${escapeHtml(money(entry.amountCents))}</strong></div>`).join("") : `<div class="nk-empty">Tus movimientos aparecerán aquí después de tu primera compra.</div>`}
     </section>
 
-    <p class="nk-ib-link"><a href="https://cohens-operations-production.up.railway.app/registro/ib">Programa de IBs</a></p>
+    <p class="nk-ib-link"><a href="/apps/nekudot/registro/ib">Programa de IBs</a></p>
     <script>
       document.querySelectorAll('.nk-rebuy').forEach(function(button){
         button.addEventListener('click', async function(){

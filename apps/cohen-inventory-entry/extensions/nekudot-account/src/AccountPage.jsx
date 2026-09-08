@@ -1,5 +1,6 @@
 import { render } from "preact";
-import { LoadingOrError, money, tierLabel, useNekudotAccount } from "./shared.jsx";
+import { useState } from "preact/hooks";
+import { LoadingOrError, money, postNekudotAction, tierLabel, useNekudotAccount } from "./shared.jsx";
 
 export default async () => render(<AccountPage />, document.body);
 
@@ -44,19 +45,7 @@ function AccountPage() {
         </s-stack>
       </s-section>
 
-      {ibWallet ? <s-section heading="Mi programa de referidos IB">
-        <s-stack direction="block" gap="base">
-          <s-banner tone="info" heading={`Código IB: ${ibWallet.code}`}>Tus comisiones están separadas de tus Nekudot personales.</s-banner>
-          <s-grid gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gap="base">
-            <Metric label="Comisión disponible" value={money(ibWallet.availableCents)} />
-            <Metric label="Comisión histórica" value={money(ibWallet.lifetimeCommissionCents)} />
-            <Metric label="Personas referidas" value={String(ibWallet.referredClients.length)} />
-          </s-grid>
-          <s-stack direction="block" gap="small-200">
-            {ibWallet.referredClients.length ? ibWallet.referredClients.map((client) => <s-box key={client.id} padding="base" border="base" borderRadius="base"><s-stack direction="inline" gap="base" justifyContent="space-between"><s-stack direction="block" gap="small-100"><s-text type="strong">{client.displayName}</s-text><s-text color="subdued">{client.community || "Sin comunidad"} · {tierLabel(client.cardTier)}</s-text></s-stack><s-text>{client.active ? "Activo" : "Inactivo"}</s-text></s-stack></s-box>) : <s-text color="subdued">Todavía no hay personas vinculadas con tu código.</s-text>}
-          </s-stack>
-        </s-stack>
-      </s-section> : null}
+      {ibWallet ? <IbGoldWallet wallet={ibWallet} onReload={state.reload} /> : null}
 
       {isVoucher ? <s-section heading="Tarjeta de vales">
         <s-banner tone="info" heading={`${money(member.availableCents)} disponibles en vales`}>El saldo de vales no genera cashback ni se mezcla con comisiones IB.</s-banner>
@@ -75,6 +64,62 @@ function AccountPage() {
       </s-section>
     </s-stack>
   </s-page>;
+}
+
+function IbGoldWallet({ wallet, onReload }) {
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function submit(intent) {
+    setBusy(intent);
+    setMessage("");
+    try {
+      await postNekudotAction(intent, { amount });
+      setMessage(intent === "ib_gold_to_store"
+        ? "Tus Nekudot Gold ya están disponibles para comprar en Cohen's."
+        : "Solicitud de retiro registrada. El saldo quedó reservado para revisión.");
+      setAmount("");
+      onReload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No pudimos completar la solicitud.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return <s-section heading="Mis Nekudot Gold · Programa IB">
+    <s-stack direction="block" gap="base">
+      <s-banner tone="info" heading={`Código IB: ${wallet.code}`}>
+        Tus ganancias por referidos son Nekudot Gold: puedes convertirlas para comprar inmediatamente en Cohen's o solicitar su retiro en efectivo.
+      </s-banner>
+      <s-grid gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gap="base">
+        <Metric label="Gold disponibles" value={money(wallet.availableCents)} />
+        <Metric label="Gold en retiro" value={money(wallet.reservedWithdrawalCents)} />
+        <Metric label="Gold históricos" value={money(wallet.lifetimeCommissionCents)} />
+        <Metric label="Personas referidas" value={String(wallet.referredClients.length)} />
+      </s-grid>
+      <s-section heading="Usar o retirar">
+        <s-stack direction="block" gap="base">
+          <s-text-field label="Cantidad (MXN)" value={amount} inputMode="decimal" placeholder="0.00" onInput={(event) => setAmount(event.currentTarget.value)} />
+          <s-stack direction="inline" gap="base">
+            <s-button variant="primary" disabled={Boolean(busy) || !amount} onClick={() => submit("ib_gold_to_store")}>{busy === "ib_gold_to_store" ? "Convirtiendo…" : "Usar en Cohen's"}</s-button>
+            <s-button variant="secondary" disabled={Boolean(busy) || !amount} onClick={() => submit("ib_gold_withdrawal")}>{busy === "ib_gold_withdrawal" ? "Solicitando…" : "Solicitar retiro"}</s-button>
+          </s-stack>
+          {message ? <s-banner tone="info">{message}</s-banner> : null}
+          <s-text color="subdued">Al elegir “Usar en Cohen's”, el importe pasa a tu saldo Nekudot para aplicarlo al carrito. Las solicitudes de efectivo quedan pendientes de validación y pago por administración.</s-text>
+        </s-stack>
+      </s-section>
+      {wallet.withdrawals?.length ? <s-stack direction="block" gap="small-200">
+        <s-heading>Solicitudes de retiro</s-heading>
+        {wallet.withdrawals.map((item) => <s-box key={item.id} padding="base" border="base" borderRadius="base"><s-stack direction="inline" justifyContent="space-between" gap="base"><s-text>{money(item.amountCents)}</s-text><s-text>{item.status === "REQUESTED" ? "En revisión" : item.status}</s-text></s-stack></s-box>)}
+      </s-stack> : null}
+      <s-stack direction="block" gap="small-200">
+        <s-heading>Mi red</s-heading>
+        {wallet.referredClients.length ? wallet.referredClients.map((client) => <s-box key={client.id} padding="base" border="base" borderRadius="base"><s-stack direction="inline" gap="base" justifyContent="space-between"><s-stack direction="block" gap="small-100"><s-text type="strong">{client.displayName}</s-text><s-text color="subdued">{client.community || "Sin comunidad"} · {tierLabel(client.cardTier)}</s-text></s-stack><s-text>{client.active ? "Activo" : "Inactivo"}</s-text></s-stack></s-box>) : <s-text color="subdued">Todavía no hay personas vinculadas con tu código.</s-text>}
+      </s-stack>
+    </s-stack>
+  </s-section>;
 }
 
 function Metric({ label, value }) {

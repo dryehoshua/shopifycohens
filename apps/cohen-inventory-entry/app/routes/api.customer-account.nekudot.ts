@@ -3,6 +3,12 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
 import { signedMemberPhotoUrl } from "../nekudot-photo-url.server";
 import {
+  activateCommunityVoucher,
+  communityVoucherForMember,
+  requestIbGoldWithdrawal,
+  transferIbGoldToNekudot,
+} from "../community-wallet.server";
+import {
   cancelOnlineNekudotRedemption,
   createOnlineNekudotRedemption,
 } from "../nekudot-online-redemption.server";
@@ -49,6 +55,17 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const intent = String(body?.intent || "");
+    if (intent === "activate_community_voucher") {
+      return Response.json({ ok: true, communityVoucher: await activateCommunityVoucher(identity.memberId) }, { headers: corsHeaders });
+    }
+    if (intent === "ib_gold_to_store") {
+      const result = await transferIbGoldToNekudot(identity.memberId, body?.amount);
+      return Response.json({ ok: true, ...result }, { headers: corsHeaders });
+    }
+    if (intent === "ib_gold_withdrawal") {
+      const withdrawal = await requestIbGoldWithdrawal(identity.memberId, body?.amount);
+      return Response.json({ ok: true, withdrawal: { id: withdrawal.id, amountCents: withdrawal.amountCents, status: withdrawal.status, requestedAt: withdrawal.requestedAt } }, { headers: corsHeaders });
+    }
     const { admin } = await unauthenticated.admin(shop);
     if (intent === "cancel") {
       await cancelOnlineNekudotRedemption({
@@ -185,6 +202,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
   const digitalCard = await memberCardData(refreshed.id);
   const ibDashboard = refreshed.ownedBroker?.active ? await brokerDashboard(refreshed.ownedBroker.id) : null;
+  const [communityVoucher, withdrawalRequests] = await Promise.all([
+    communityVoucherForMember(refreshed.id),
+    refreshed.ownedBroker?.active ? db.nekudotBrokerWithdrawal.findMany({
+      where: { brokerId: refreshed.ownedBroker.id }, orderBy: { requestedAt: "desc" }, take: 12,
+    }) : Promise.resolve([]),
+  ]);
   return Response.json({
     registered: true,
     member: {
@@ -205,7 +228,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       photoUrl: refreshed.photoFileName ? signedMemberPhotoUrl(refreshed.id, refreshed.photoFileName) : null,
     },
     ibWallet: refreshed.ownedBroker?.active ? {
-      availableCents: refreshed.ownedBroker.commissionBalanceCents,
+      balanceCents: refreshed.ownedBroker.commissionBalanceCents,
+      reservedWithdrawalCents: refreshed.ownedBroker.reservedWithdrawalCents,
+      availableCents: refreshed.ownedBroker.commissionBalanceCents - refreshed.ownedBroker.reservedWithdrawalCents,
       lifetimeCommissionCents: refreshed.ownedBroker.lifetimeCommissionCents,
       paidOutCents: refreshed.ownedBroker.paidOutCents,
       code: refreshed.ownedBroker.code,
@@ -218,7 +243,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
         active: client.active,
       })) || [],
       ledger: ibDashboard?.ledger.map((entry) => ({ id: entry.id, amountCents: entry.amountCents, description: entry.description, occurredAt: entry.occurredAt })) || [],
+      withdrawals: withdrawalRequests.map((item) => ({
+        id: item.id, amountCents: item.amountCents, status: item.status, requestedAt: item.requestedAt,
+      })),
     } : null,
+    communityVoucher,
     accruals: refreshed.accruals.map((item) => ({
       orderId: item.shopifyOrderId,
       orderName: item.orderName,

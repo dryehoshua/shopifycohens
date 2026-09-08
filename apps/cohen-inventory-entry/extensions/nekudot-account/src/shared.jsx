@@ -1,5 +1,5 @@
 import "@shopify/ui-extensions/preact";
-import { useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 
 const DEFAULT_BACKEND = "https://cohens-operations-production.up.railway.app";
 
@@ -12,6 +12,7 @@ export function tierLabel(tier) {
 }
 
 export function useNekudotAccount() {
+  const [revision, setRevision] = useState(0);
   const [state, setState] = useState({ loading: true, data: null, error: "" });
   useEffect(() => {
     let active = true;
@@ -31,8 +32,21 @@ export function useNekudotAccount() {
     }
     load();
     return () => { active = false; };
-  }, []);
-  return state;
+  }, [revision]);
+  return { ...state, reload: useCallback(() => setRevision((value) => value + 1), []) };
+}
+
+export async function postNekudotAction(intent, values = {}) {
+  const token = await shopify.sessionToken.get();
+  const configured = String(shopify.settings?.value?.backend_url || "").trim().replace(/\/$/, "");
+  const response = await fetch(`${configured || DEFAULT_BACKEND}/api/customer-account/nekudot`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ intent, ...values }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) throw new Error(data?.message || "No pudimos completar la solicitud.");
+  return data;
 }
 
 export function LoadingOrError({ state }) {
