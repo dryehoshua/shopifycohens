@@ -39,7 +39,7 @@ target = "customer-account.order-status.block.render"
 
 [[extensions.targeting]]
 module = "./src/CheckoutBlock.jsx"
-target = "purchase.checkout.block.render"
+target = "purchase.checkout.reductions.render-after"
 
 [[extensions.targeting]]
 module = "./src/ThankYouBlock.jsx"

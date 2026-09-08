@@ -3,6 +3,7 @@ import db from "../db.server";
 import { memberCardData, memberOrders } from "../nekudot-registration.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
 import { createOnlineNekudotRedemption } from "../nekudot-online-redemption.server";
+import { signedMemberPhotoUrl } from "../nekudot-photo-url.server";
 import { authenticate } from "../shopify.server";
 
 type ProxyContext = Awaited<ReturnType<typeof authenticate.public.appProxy>>;
@@ -79,12 +80,19 @@ function portalShell(content: string) {
 
 function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders: Awaited<ReturnType<typeof memberOrders>>, message?: PortalMessage) {
   const availablePesos = (card.availableCents / 100).toFixed(2);
+  const photoUrl = card.photoFileName ? signedMemberPhotoUrl(card.id, card.photoFileName) : null;
   const recentLedgerPromise = db.nekudotLedgerEntry.findMany({
     where: { memberId: card.id, walletType: "CLIENT" },
     orderBy: { occurredAt: "desc" },
     take: 12,
   });
-  return recentLedgerPromise.then((ledger) => portalShell(`
+  const referredClientsPromise = card.ownedBroker?.active ? db.nekudotMember.findMany({
+    where: { brokerId: card.ownedBroker.id, id: { not: card.id } },
+    orderBy: { createdAt: "desc" },
+    take: 30,
+    select: { id: true, displayName: true, community: true, cardTier: true, active: true, lifetimeEarnedCents: true },
+  }) : Promise.resolve([]);
+  return Promise.all([recentLedgerPromise, referredClientsPromise]).then(([ledger, referredClients]) => portalShell(`
     <section class="nk-hero">
       <span class="nk-kicker">MI CUENTA NEKUDOT</span>
       <h1>Hola, ${escapeHtml(card.displayName)}</h1>
@@ -111,11 +119,15 @@ function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders:
       </section>
       <aside class="nk-card">
         <small>TARJETA DIGITAL · ${escapeHtml(tierLabel(card.cardTier))}</small>
-        <h2>${escapeHtml(card.displayName)}</h2>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px">${photoUrl ? `<img src="${escapeHtml(photoUrl)}" alt="Foto de ${escapeHtml(card.displayName)}" style="width:72px;height:86px;object-fit:cover;border-radius:12px;border:2px solid rgba(255,255,255,.75)">` : ""}<h2>${escapeHtml(card.displayName)}</h2></div>
         <span class="nk-card-balance">${escapeHtml(money(card.availableCents))}</span>
         <div class="nk-codes"><img src="${card.qrDataUrl}" alt="Código QR Nekudot"><img src="${card.barcodeDataUrl}" alt="Código de barras Nekudot"></div>
       </aside>
     </div>
+
+    ${card.ownedBroker?.active ? `<div class="nk-section-title"><h2>Mi programa de referidos IB</h2></div><section class="nk-panel"><p>Tu wallet IB está separada de tus Nekudot personales.</p><div class="nk-summary"><div class="nk-stat"><span>Comisión disponible</span><strong>${escapeHtml(money(card.ownedBroker.commissionBalanceCents))}</strong></div><div class="nk-stat"><span>Comisión histórica</span><strong>${escapeHtml(money(card.ownedBroker.lifetimeCommissionCents))}</strong></div><div class="nk-stat"><span>Código IB</span><strong>${escapeHtml(card.ownedBroker.code)}</strong></div></div><div class="nk-orders" style="margin-top:14px">${referredClients.length ? referredClients.map((client) => `<article class="nk-order"><div><strong>${escapeHtml(client.displayName)}</strong><div class="nk-order-meta">${escapeHtml(client.community || "Sin comunidad")} · ${escapeHtml(tierLabel(client.cardTier))}</div></div><div class="nk-order-total">${client.active ? "Activo" : "Inactivo"}</div></article>`).join("") : `<div class="nk-empty">Todavía no hay personas vinculadas con tu código.</div>`}</div></section>` : ""}
+
+    ${card.cardTier === "VOUCHER" ? `<div class="nk-section-title"><h2>Tarjeta de vales</h2></div><section class="nk-panel"><p>Saldo disponible para vales: <strong>${escapeHtml(money(card.availableCents))}</strong>. Este saldo no genera cashback ni se mezcla con comisiones IB.</p></section>` : ""}
 
     <div class="nk-section-title"><h2>Mis compras</h2><a href="/collections/all">Seguir comprando</a></div>
     <section class="nk-orders">
@@ -191,18 +203,41 @@ async function dashboard(proxy: ProxyContext, shop: string, customerId: string) 
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { proxy, shop, customerId } = await proxyIdentity(request);
-  if (!customerId) return proxy.liquid(loginHtml());
+  const wantsJson = new URL(request.url).searchParams.get("format") === "json";
+  if (!customerId) {
+    if (wantsJson) return Response.json({ authenticated: false, registered: false }, { status: 401 });
+    return proxy.liquid(loginHtml());
+  }
   const data = await dashboard(proxy, shop, customerId);
-  if (!data) return proxy.liquid(registrationHtml());
+  if (!data) {
+    if (wantsJson) return Response.json({ authenticated: true, registered: false });
+    return proxy.liquid(registrationHtml());
+  }
+  if (wantsJson) return Response.json({
+    authenticated: true,
+    registered: true,
+    member: {
+      displayName: data.card.displayName,
+      cardTier: data.card.cardTier,
+      availableCents: data.card.availableCents,
+    },
+  }, { headers: { "Cache-Control": "no-store" } });
   return proxy.liquid(await dashboardHtml(data.card, data.orders));
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const { proxy, shop, customerId } = await proxyIdentity(request);
-  if (!customerId) return proxy.liquid(loginHtml(), { status: 401 });
-  const data = await dashboard(proxy, shop, customerId);
-  if (!data) return proxy.liquid(registrationHtml(), { status: 404 });
   const form = await request.formData();
+  const wantsJson = String(form.get("format") || "") === "json";
+  if (!customerId) {
+    if (wantsJson) return Response.json({ message: "Inicia sesión para usar tus Nekudot." }, { status: 401 });
+    return proxy.liquid(loginHtml(), { status: 401 });
+  }
+  const data = await dashboard(proxy, shop, customerId);
+  if (!data) {
+    if (wantsJson) return Response.json({ message: "Activa tu tarjeta Nekudot antes de usar puntos." }, { status: 404 });
+    return proxy.liquid(registrationHtml(), { status: 404 });
+  }
   try {
     if (String(form.get("intent") || "") !== "redeem") throw new NekudotError("Operación no válida.");
     if (!proxy.admin) throw new NekudotError("La conexión de la tienda necesita actualizarse.", 503);
@@ -214,6 +249,11 @@ export async function action({ request }: ActionFunctionArgs) {
       amount: form.get("amount"),
       cartReference: "SHOPIFY_STOREFRONT",
     });
+    if (wantsJson) return Response.json({
+      ok: true,
+      amountCents: redemption.amountCents,
+      applyUrl: redemption.discountApplyUrl,
+    });
     const refreshed = await dashboard(proxy, shop, customerId);
     return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, {
       tone: "success",
@@ -222,6 +262,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }));
   } catch (error) {
     const caught = error instanceof NekudotError ? error : new NekudotError("No pudimos preparar el canje.", 500);
+    if (wantsJson) return Response.json({ message: caught.message }, { status: caught.status });
     const refreshed = await dashboard(proxy, shop, customerId);
     return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "error", text: caught.message }), { status: caught.status });
   }

@@ -1,12 +1,13 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
+import { signedMemberPhotoUrl } from "../nekudot-photo-url.server";
 import {
   cancelOnlineNekudotRedemption,
   createOnlineNekudotRedemption,
 } from "../nekudot-online-redemption.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
-import { memberCardData } from "../nekudot-registration.server";
+import { brokerDashboard, memberCardData } from "../nekudot-registration.server";
 import { unauthenticated } from "../shopify.server";
 
 type SessionClaims = {
@@ -183,6 +184,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
   const digitalCard = await memberCardData(refreshed.id);
+  const ibDashboard = refreshed.ownedBroker?.active ? await brokerDashboard(refreshed.ownedBroker.id) : null;
   return Response.json({
     registered: true,
     member: {
@@ -200,12 +202,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
       cardNumber: digitalCard.cardNumber,
       qrDataUrl: digitalCard.qrDataUrl,
       barcodeDataUrl: digitalCard.barcodeDataUrl,
+      photoUrl: refreshed.photoFileName ? signedMemberPhotoUrl(refreshed.id, refreshed.photoFileName) : null,
     },
-    ibWallet: refreshed.ownedBroker ? {
+    ibWallet: refreshed.ownedBroker?.active ? {
       availableCents: refreshed.ownedBroker.commissionBalanceCents,
       lifetimeCommissionCents: refreshed.ownedBroker.lifetimeCommissionCents,
       paidOutCents: refreshed.ownedBroker.paidOutCents,
       code: refreshed.ownedBroker.code,
+      referredClients: ibDashboard?.clients.filter((client) => client.id !== ibDashboard.ownerMember?.id).map((client) => ({
+        id: client.id,
+        displayName: client.displayName,
+        community: client.community,
+        cardTier: client.cardTier,
+        lifetimeEarnedCents: client.lifetimeEarnedCents,
+        active: client.active,
+      })) || [],
+      ledger: ibDashboard?.ledger.map((entry) => ({ id: entry.id, amountCents: entry.amountCents, description: entry.description, occurredAt: entry.occurredAt })) || [],
     } : null,
     accruals: refreshed.accruals.map((item) => ({
       orderId: item.shopifyOrderId,

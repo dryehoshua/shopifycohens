@@ -1,6 +1,6 @@
 {
   "customer-account.profile.block.render": {},
   "customer-account.order-status.block.render": {},
-  "purchase.checkout.block.render": {},
+  "purchase.checkout.reductions.render-after": {},
   "purchase.thank-you.block.render": {}
 }
