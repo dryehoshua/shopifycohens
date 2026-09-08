@@ -61,6 +61,27 @@ async function cancelPreviousOnlineRedemptions(admin: AdminApiContext, shop: str
   }
 }
 
+export async function cancelOnlineNekudotRedemption(input: {
+  admin: AdminApiContext;
+  shop: string;
+  memberId: string;
+  redemptionId: string;
+}) {
+  const redemption = await db.nekudotRedemption.findFirst({
+    where: {
+      id: input.redemptionId,
+      shop: input.shop,
+      memberId: input.memberId,
+      status: "RESERVED",
+    },
+  });
+  if (!redemption) return null;
+  if (redemption.shopifyDiscountId) {
+    await deleteDiscount(input.admin, redemption.shopifyDiscountId);
+  }
+  return cancelNekudotReservation(input.shop, redemption.id);
+}
+
 export function normalizeOnlineRedemptionCents(value: unknown, availableCents: number) {
   const normalized = String(value ?? "").trim().replace(",", ".");
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {

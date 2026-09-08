@@ -1,7 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
-import { claimPendingNekudotOrders } from "../nekudot.server";
+import {
+  cancelOnlineNekudotRedemption,
+  createOnlineNekudotRedemption,
+} from "../nekudot-online-redemption.server";
+import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
 import { memberCardData } from "../nekudot-registration.server";
 import { unauthenticated } from "../shopify.server";
 
@@ -16,7 +20,7 @@ type SessionClaims = {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Cache-Control": "no-store",
 };
 
@@ -25,6 +29,70 @@ function decodePart(value: string) {
     return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
   } catch {
     throw new Response("Token no válido.", { status: 401, headers: corsHeaders });
+  }
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+  if (request.method !== "POST") {
+    return Response.json({ message: "Método no permitido." }, { status: 405, headers: corsHeaders });
+  }
+  try {
+    const { shop, customerId } = verifiedCustomerAccountSession(request);
+    const identity = await db.nekudotCustomerIdentity.findUnique({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
+      select: { memberId: true, member: { select: { active: true } } },
+    });
+    if (!identity?.member.active) {
+      return Response.json({ message: "Activa tu tarjeta Nekudot antes de usar puntos." }, { status: 404, headers: corsHeaders });
+    }
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const intent = String(body?.intent || "");
+    const { admin } = await unauthenticated.admin(shop);
+    if (intent === "cancel") {
+      await cancelOnlineNekudotRedemption({
+        admin,
+        shop,
+        memberId: identity.memberId,
+        redemptionId: String(body?.redemptionId || ""),
+      });
+      return Response.json({ ok: true }, { headers: corsHeaders });
+    }
+    if (intent !== "redeem") {
+      return Response.json({ message: "Solicitud de canje no válida." }, { status: 400, headers: corsHeaders });
+    }
+    const subtotalCents = Number(body?.subtotalCents);
+    if (!Number.isInteger(subtotalCents) || subtotalCents < 100) {
+      return Response.json({ message: "El carrito no tiene productos suficientes para canjear." }, { status: 400, headers: corsHeaders });
+    }
+    const amount = String(body?.amount || "").trim().replace(",", ".");
+    const amountCents = /^\d+(?:\.\d{1,2})?$/.test(amount) ? Math.round(Number(amount) * 100) : 0;
+    if (amountCents > subtotalCents) {
+      return Response.json({
+        message: "Los Nekudot sólo pueden descontar productos; el envío se paga por separado.",
+      }, { status: 400, headers: corsHeaders });
+    }
+    const redemption = await createOnlineNekudotRedemption({
+      admin,
+      shop,
+      customerId,
+      memberId: identity.memberId,
+      amount,
+      cartReference: String(body?.checkoutToken || "customer-account-checkout"),
+    });
+    return Response.json({
+      ok: true,
+      code: redemption.discountCode,
+      redemptionId: redemption.id,
+      amountCents: redemption.amountCents,
+    }, { headers: corsHeaders });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    if (error instanceof NekudotError) {
+      return Response.json({ message: error.message, code: error.code }, { status: error.status, headers: corsHeaders });
+    }
+    console.error("Customer account Nekudot redemption failed", error);
+    return Response.json({ message: "No pudimos aplicar tus Nekudot. Intenta nuevamente." }, { status: 500, headers: corsHeaders });
   }
 }
 
