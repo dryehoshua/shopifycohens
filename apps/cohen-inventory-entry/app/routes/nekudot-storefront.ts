@@ -4,6 +4,7 @@ import { memberCardData, memberOrders } from "../nekudot-registration.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
 import { createOnlineNekudotRedemption } from "../nekudot-online-redemption.server";
 import { signedMemberPhotoUrl } from "../nekudot-photo-url.server";
+import { activateCommunityVoucher, communityVoucherForMember, requestIbGoldWithdrawal, transferIbGoldToNekudot } from "../community-wallet.server";
 import { authenticate } from "../shopify.server";
 
 type ProxyContext = Awaited<ReturnType<typeof authenticate.public.appProxy>>;
@@ -92,7 +93,9 @@ function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders:
     take: 30,
     select: { id: true, displayName: true, community: true, cardTier: true, active: true, lifetimeEarnedCents: true },
   }) : Promise.resolve([]);
-  return Promise.all([recentLedgerPromise, referredClientsPromise]).then(([ledger, referredClients]) => portalShell(`
+  const voucherPromise = communityVoucherForMember(card.id);
+  const withdrawalsPromise = card.ownedBroker?.active ? db.nekudotBrokerWithdrawal.findMany({ where: { brokerId: card.ownedBroker.id }, orderBy: { requestedAt: "desc" }, take: 8 }) : Promise.resolve([]);
+  return Promise.all([recentLedgerPromise, referredClientsPromise, voucherPromise, withdrawalsPromise]).then(([ledger, referredClients, voucher, withdrawals]) => portalShell(`
     <section class="nk-hero">
       <span class="nk-kicker">MI CUENTA NEKUDOT</span>
       <h1>Hola, ${escapeHtml(card.displayName)}</h1>
@@ -125,9 +128,10 @@ function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders:
       </aside>
     </div>
 
-    ${card.ownedBroker?.active ? `<div class="nk-section-title"><h2>Mi programa de referidos IB</h2></div><section class="nk-panel"><p>Tu wallet IB está separada de tus Nekudot personales.</p><div class="nk-summary"><div class="nk-stat"><span>Comisión disponible</span><strong>${escapeHtml(money(card.ownedBroker.commissionBalanceCents))}</strong></div><div class="nk-stat"><span>Comisión histórica</span><strong>${escapeHtml(money(card.ownedBroker.lifetimeCommissionCents))}</strong></div><div class="nk-stat"><span>Código IB</span><strong>${escapeHtml(card.ownedBroker.code)}</strong></div></div><div class="nk-orders" style="margin-top:14px">${referredClients.length ? referredClients.map((client) => `<article class="nk-order"><div><strong>${escapeHtml(client.displayName)}</strong><div class="nk-order-meta">${escapeHtml(client.community || "Sin comunidad")} · ${escapeHtml(tierLabel(client.cardTier))}</div></div><div class="nk-order-total">${client.active ? "Activo" : "Inactivo"}</div></article>`).join("") : `<div class="nk-empty">Todavía no hay personas vinculadas con tu código.</div>`}</div></section>` : ""}
+    ${card.ownedBroker?.active ? `<div class="nk-section-title"><h2>Mis Nekudot Gold · Programa IB</h2></div><section class="nk-panel"><p>Las ganancias por referidos pueden usarse inmediatamente en Cohen's o solicitarse como retiro en efectivo.</p><div class="nk-summary"><div class="nk-stat"><span>Gold disponibles</span><strong>${escapeHtml(money(card.ownedBroker.commissionBalanceCents - card.ownedBroker.reservedWithdrawalCents))}</strong></div><div class="nk-stat"><span>Gold en retiro</span><strong>${escapeHtml(money(card.ownedBroker.reservedWithdrawalCents))}</strong></div><div class="nk-stat"><span>Código IB</span><strong>${escapeHtml(card.ownedBroker.code)}</strong></div></div><form class="nk-form" method="post" action="/apps/nekudot"><div class="nk-field"><label for="nk-gold-amount">Cantidad Gold (MXN)</label><input id="nk-gold-amount" name="amount" type="number" min="1" step="0.01" required></div><button class="nk-button" name="intent" value="ib_gold_to_store">Usar en Cohen's</button><button class="nk-button nk-secondary" name="intent" value="ib_gold_withdrawal">Solicitar retiro</button></form>${withdrawals.length ? `<div class="nk-orders" style="margin-top:14px">${withdrawals.map((item) => `<article class="nk-order"><div><strong>Retiro ${escapeHtml(money(item.amountCents))}</strong><div class="nk-order-meta">${escapeHtml(new Date(item.requestedAt).toLocaleDateString("es-MX"))}</div></div><div class="nk-order-total">${item.status === "REQUESTED" ? "En revisión" : escapeHtml(item.status)}</div></article>`).join("")}</div>` : ""}<div class="nk-orders" style="margin-top:14px">${referredClients.length ? referredClients.map((client) => `<article class="nk-order"><div><strong>${escapeHtml(client.displayName)}</strong><div class="nk-order-meta">${escapeHtml(client.community || "Sin comunidad")} · ${escapeHtml(tierLabel(client.cardTier))}</div></div><div class="nk-order-total">${client.active ? "Activo" : "Inactivo"}</div></article>`).join("") : `<div class="nk-empty">Todavía no hay personas vinculadas con tu código.</div>`}</div></section>` : ""}
 
-    ${card.cardTier === "VOUCHER" ? `<div class="nk-section-title"><h2>Tarjeta de vales</h2></div><section class="nk-panel"><p>Saldo disponible para vales: <strong>${escapeHtml(money(card.availableCents))}</strong>. Este saldo no genera cashback ni se mezcla con comisiones IB.</p></section>` : ""}
+    <div class="nk-section-title"><h2>Vales comunitarios</h2></div>
+    ${voucher ? `<section class="nk-panel"><p>Segundo monedero de apoyo: <strong>${escapeHtml(money(voucher.availableCents))}</strong>. Sólo sirve para productos Cohen's; no genera cashback ni permite retiros.</p><div class="nk-grid"><div><strong>${escapeHtml(voucher.cardNumber)}</strong><div class="nk-order-meta">Tarjeta virtual comunitaria activa</div></div><div class="nk-codes"><img src="${voucher.qrDataUrl}" alt="QR de vales"><img src="${voucher.barcodeDataUrl}" alt="Código de barras de vales"></div></div></section>` : `<section class="nk-panel"><p>Activa gratuitamente una tarjeta virtual independiente. Comenzará en cero y aquí verás los apoyos que la comunidad te asigne.</p><form method="post" action="/apps/nekudot"><button class="nk-button" name="intent" value="activate_community_voucher">Activar mis vales comunitarios</button></form></section>`}
 
     <div class="nk-section-title"><h2>Mis compras</h2><a href="/collections/all">Seguir comprando</a></div>
     <section class="nk-orders">
@@ -239,7 +243,23 @@ export async function action({ request }: ActionFunctionArgs) {
     return proxy.liquid(registrationHtml(), { status: 404 });
   }
   try {
-    if (String(form.get("intent") || "") !== "redeem") throw new NekudotError("Operación no válida.");
+    const intent = String(form.get("intent") || "");
+    if (intent === "activate_community_voucher") {
+      await activateCommunityVoucher(data.identity.memberId);
+      const refreshed = await dashboard(proxy, shop, customerId);
+      return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: "Tu tarjeta virtual de vales comunitarios ya está activa." }));
+    }
+    if (intent === "ib_gold_to_store") {
+      const result = await transferIbGoldToNekudot(data.identity.memberId, form.get("amount"));
+      const refreshed = await dashboard(proxy, shop, customerId);
+      return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: `${money(result.amountCents)} en Nekudot Gold ya están disponibles para comprar.` }));
+    }
+    if (intent === "ib_gold_withdrawal") {
+      const result = await requestIbGoldWithdrawal(data.identity.memberId, form.get("amount"));
+      const refreshed = await dashboard(proxy, shop, customerId);
+      return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: `Solicitud de retiro por ${money(result.amountCents)} registrada para revisión.` }));
+    }
+    if (intent !== "redeem") throw new NekudotError("Operación no válida.");
     if (!proxy.admin) throw new NekudotError("La conexión de la tienda necesita actualizarse.", 503);
     const redemption = await createOnlineNekudotRedemption({
       admin: proxy.admin,
