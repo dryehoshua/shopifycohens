@@ -7,5 +7,5 @@ function ProfileBlock() {
   const state = useNekudotAccount();
   if (state.loading || state.error || !state.data?.registered) return <LoadingOrError state={state} />;
   const { member } = state.data;
-  return <s-section heading="Beneficios Cohen's"><s-stack direction="block" gap="small-200"><s-text type="strong">{money(member.availableCents)} en Nekudot</s-text><s-text color="subdued">{tierLabel(member.cardTier)} · Tarjeta •••• {String(member.cardNumber || "").slice(-4)}</s-text><s-link href="extension:nekudot-account/">Tarjeta Nekudot, movimientos y compras</s-link><s-link href="extension:community-vouchers/">Vales comunitarios</s-link></s-stack></s-section>;
+  return <s-section heading="Beneficios Cohen's"><s-stack direction="block" gap="small-200"><s-text type="strong">{money(member.availableCents)} en Nekudot</s-text><s-text color="subdued">{tierLabel(member.cardTier)} · Tarjeta •••• {String(member.cardNumber || "").slice(-4)}</s-text><s-link href="extension:nekudot-account/">Abrir mi portal Cohen's: Nekudot, Vales y Referidos</s-link></s-stack></s-section>;
 }

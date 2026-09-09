@@ -13,7 +13,7 @@ import {
   createOnlineNekudotRedemption,
 } from "../nekudot-online-redemption.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
-import { brokerDashboard, memberCardData } from "../nekudot-registration.server";
+import { activateMemberBroker, brokerDashboard, memberCardData, RegistrationError } from "../nekudot-registration.server";
 import { unauthenticated } from "../shopify.server";
 
 type SessionClaims = {
@@ -57,6 +57,10 @@ export async function action({ request }: ActionFunctionArgs) {
     const intent = String(body?.intent || "");
     if (intent === "activate_community_voucher") {
       return Response.json({ ok: true, communityVoucher: await activateCommunityVoucher(identity.memberId) }, { headers: corsHeaders });
+    }
+    if (intent === "activate_ib") {
+      const broker = await activateMemberBroker(identity.memberId, { code: body?.code, community: body?.community });
+      return Response.json({ ok: true, broker: { code: broker.code, displayName: broker.displayName } }, { headers: corsHeaders });
     }
     if (intent === "ib_gold_to_store") {
       const result = await transferIbGoldToNekudot(identity.memberId, body?.amount);
@@ -108,6 +112,9 @@ export async function action({ request }: ActionFunctionArgs) {
     if (error instanceof Response) return error;
     if (error instanceof NekudotError) {
       return Response.json({ message: error.message, code: error.code }, { status: error.status, headers: corsHeaders });
+    }
+    if (error instanceof RegistrationError) {
+      return Response.json({ message: error.message }, { status: error.status, headers: corsHeaders });
     }
     console.error("Customer account Nekudot redemption failed", error);
     return Response.json({ message: "No pudimos aplicar tus Nekudot. Intenta nuevamente." }, { status: 500, headers: corsHeaders });

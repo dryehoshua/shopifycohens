@@ -336,6 +336,59 @@ export async function registerPublicBroker(formData: FormData) {
   }
 }
 
+export async function activateMemberBroker(memberId: string, input: { code?: unknown; community?: unknown }) {
+  const member = await db.nekudotMember.findUnique({
+    where: { id: memberId },
+    include: { ownedBroker: true },
+  });
+  if (!member?.active) throw new RegistrationError("Activa tu cuenta Nekudot antes de abrir el programa de referidos.", 404);
+  if (member.ownedBroker?.active) return member.ownedBroker;
+
+  const requestedCode = publicBrokerCode(input.code);
+  const community = registrationCommunity(input.community);
+  const codeConflict = await db.nekudotBroker.findUnique({
+    where: { programKey_code: { programKey: NEKUDOT_PROGRAM_KEY, code: requestedCode } },
+  });
+
+  const contactOr = [
+    ...(member.email ? [{ email: member.email.toLowerCase() }] : []),
+    ...(member.phone ? [{ phone: member.phone }] : []),
+  ];
+  const contactBroker = contactOr.length ? await db.nekudotBroker.findFirst({
+    where: { programKey: NEKUDOT_PROGRAM_KEY, OR: contactOr },
+  }) : null;
+
+  if (contactBroker?.ownerMemberId && contactBroker.ownerMemberId !== member.id) {
+    throw new RegistrationError("Ese perfil de referidos ya está vinculado con otra cuenta.", 409);
+  }
+  if (codeConflict && codeConflict.id !== contactBroker?.id) {
+    throw new RegistrationError("Ese código de referido ya está ocupado. Elige otro.", 409);
+  }
+
+  const broker = contactBroker
+    ? await db.nekudotBroker.update({
+        where: { id: contactBroker.id },
+        data: { ownerMemberId: member.id, active: true, community: contactBroker.community || community },
+      })
+    : await db.nekudotBroker.create({
+        data: {
+          programKey: NEKUDOT_PROGRAM_KEY,
+          displayName: member.displayName,
+          email: member.email,
+          phone: member.phone,
+          community,
+          code: requestedCode,
+          ownerMemberId: member.id,
+          active: true,
+        },
+      });
+
+  if (member.cardTier === "BLUE" && !member.brokerId) {
+    await db.nekudotMember.update({ where: { id: member.id }, data: { brokerId: broker.id } });
+  }
+  return broker;
+}
+
 function credentialHash(rawToken: string) {
   return createHmac("sha256", hmacSecret()).update(`${NEKUDOT_PROGRAM_KEY}:${rawToken}`).digest("hex");
 }
