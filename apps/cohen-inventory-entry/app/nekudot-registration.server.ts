@@ -389,6 +389,45 @@ export async function activateMemberBroker(memberId: string, input: { code?: unk
   return broker;
 }
 
+export async function claimExistingMemberBroker(
+  memberId: string,
+  contact: { email?: string | null; phone?: string | null } = {},
+) {
+  const member = await db.nekudotMember.findUnique({
+    where: { id: memberId },
+    include: { ownedBroker: true },
+  });
+  if (!member?.active || member.ownedBroker?.active) return member?.ownedBroker ?? null;
+
+  const emails = [...new Set([member.email, contact.email]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean))];
+  const phones = [...new Set([member.phone, contact.phone]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean))];
+  const matches = [
+    ...emails.map((email) => ({ email })),
+    ...phones.map((phone) => ({ phone })),
+  ];
+  if (!matches.length) return null;
+
+  const broker = await db.nekudotBroker.findFirst({
+    where: { programKey: NEKUDOT_PROGRAM_KEY, active: true, OR: matches },
+  });
+  if (!broker || (broker.ownerMemberId && broker.ownerMemberId !== member.id)) return null;
+
+  const claimed = broker.ownerMemberId === member.id
+    ? broker
+    : await db.nekudotBroker.update({
+        where: { id: broker.id },
+        data: { ownerMemberId: member.id },
+      });
+  if (member.cardTier === "BLUE" && !member.brokerId) {
+    await db.nekudotMember.update({ where: { id: member.id }, data: { brokerId: claimed.id } });
+  }
+  return claimed;
+}
+
 function credentialHash(rawToken: string) {
   return createHmac("sha256", hmacSecret()).update(`${NEKUDOT_PROGRAM_KEY}:${rawToken}`).digest("hex");
 }

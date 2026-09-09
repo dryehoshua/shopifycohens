@@ -13,7 +13,7 @@ import {
   createOnlineNekudotRedemption,
 } from "../nekudot-online-redemption.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
-import { activateMemberBroker, brokerDashboard, memberCardData, RegistrationError } from "../nekudot-registration.server";
+import { activateMemberBroker, brokerDashboard, claimExistingMemberBroker, memberCardData, RegistrationError } from "../nekudot-registration.server";
 import { unauthenticated } from "../shopify.server";
 
 type SessionClaims = {
@@ -197,6 +197,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   const contact = await customerContact(shop, customerId);
   await claimPendingNekudotOrders({ memberId: identity.member.id, ...contact });
+  await claimExistingMemberBroker(identity.member.id, contact);
   const refreshed = await db.nekudotMember.findUniqueOrThrow({
     where: { id: identity.member.id },
     include: {
