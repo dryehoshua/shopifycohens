@@ -9,7 +9,7 @@ function AccountPage() {
   if (state.loading || state.error || !state.data?.registered) {
     return <s-page heading="Tarjeta Nekudot"><s-box padding="base"><LoadingOrError state={state} /></s-box></s-page>;
   }
-  const { member, accruals, ledger, ibWallet, portalUrl } = state.data;
+  const { member, accruals, ledger, ibWallet, communityVoucher, portalUrl } = state.data;
   const isVoucher = member.cardTier === "VOUCHER";
   return <s-page heading={isVoucher ? "Tarjeta de vales" : "Tarjeta Nekudot"}>
     <s-stack direction="block" gap="large-200">
@@ -45,6 +45,8 @@ function AccountPage() {
         </s-stack>
       </s-section>
 
+      <CommunityVoucherWallet wallet={communityVoucher} member={member} onReload={state.reload} />
+
       {ibWallet ? <IbGoldWallet wallet={ibWallet} onReload={state.reload} /> : null}
 
       {isVoucher ? <s-section heading="Tarjeta de vales">
@@ -64,6 +66,55 @@ function AccountPage() {
       </s-section>
     </s-stack>
   </s-page>;
+}
+
+function CommunityVoucherWallet({ wallet, member, onReload }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function activate() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await postNekudotAction("activate_community_voucher");
+      setMessage("Tu tarjeta virtual de Vales comunitarios quedó activada.");
+      onReload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No pudimos activar la tarjeta de vales.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!wallet) return <s-section heading="Vales comunitarios">
+    <s-stack direction="block" gap="base">
+      <s-banner tone="info" heading="Tu tarjeta comunitaria todavía no está activa">
+        Es un segundo monedero independiente para recibir apoyo comunitario y comprar exclusivamente en Cohen's. No se mezcla con tus Nekudot ni genera cashback.
+      </s-banner>
+      {message ? <s-banner tone="critical">{message}</s-banner> : null}
+      <s-button variant="primary" disabled={busy} onClick={activate}>{busy ? "Activando…" : "Activar mis Vales comunitarios"}</s-button>
+    </s-stack>
+  </s-section>;
+
+  return <s-section heading="Vales comunitarios">
+    <s-stack direction="block" gap="base">
+      <s-banner tone="success" heading={`${money(wallet.availableCents)} disponibles`}>
+        Saldo independiente para comprar productos Cohen's. No es transferible, no genera cashback y no puede retirarse en efectivo.
+      </s-banner>
+      <s-box padding="large" border="base" borderRadius="large" background="subdued">
+        <s-stack direction="block" gap="base">
+          <s-text color="subdued">COHEN'S · TARJETA VIRTUAL DE VALES</s-text>
+          <s-heading>{member.displayName}</s-heading>
+          <s-text type="strong">{wallet.cardNumber}</s-text>
+          <s-stack direction="inline" gap="base">
+            {wallet.qrDataUrl ? <s-image src={wallet.qrDataUrl} alt="QR de Vales comunitarios" inlineSize="128px" aspectRatio="1/1" borderRadius="base" /> : null}
+            {wallet.barcodeDataUrl ? <s-image src={wallet.barcodeDataUrl} alt="Código de barras de Vales comunitarios" inlineSize="260px" aspectRatio="3/1" objectFit="contain" borderRadius="base" /> : null}
+          </s-stack>
+        </s-stack>
+      </s-box>
+      <s-link href="extension:community-vouchers/">Abrir la sección completa de Vales comunitarios</s-link>
+    </s-stack>
+  </s-section>;
 }
 
 function IbGoldWallet({ wallet, onReload }) {
