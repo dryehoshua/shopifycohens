@@ -19,14 +19,15 @@ function CheckoutBlock() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [appliedCents, setAppliedCents] = useState(0);
+  const [paymentWallet, setPaymentWallet] = useState("nekudot");
   const subtotal = Number(shopify.cost?.subtotalAmount?.value?.amount || 0);
 
-  async function cancelReservation(backend, token, redemptionId) {
+  async function cancelReservation(backend, token, redemptionId, wallet) {
     if (!redemptionId) return;
     await fetch(`${backend}/api/customer-account/nekudot`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ intent: "cancel", redemptionId }),
+      body: JSON.stringify({ intent: wallet === "voucher" ? "cancel_voucher" : "cancel", redemptionId }),
     }).catch(() => undefined);
   }
 
@@ -50,7 +51,7 @@ function CheckoutBlock() {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          intent: "redeem",
+          intent: paymentWallet === "voucher" ? "redeem_voucher" : "redeem",
           amount: normalized,
           subtotalCents: Math.round(subtotal * 100),
           checkoutToken: shopify.checkoutToken?.value || null,
@@ -61,7 +62,7 @@ function CheckoutBlock() {
       redemptionId = result.redemptionId;
       const applied = await shopify.applyDiscountCodeChange({ type: "addDiscountCode", code: result.code });
       if (applied.type !== "success") {
-        await cancelReservation(backend, token, redemptionId);
+        await cancelReservation(backend, token, redemptionId, paymentWallet);
         throw new Error(applied.message || "Shopify no pudo aplicar el descuento.");
       }
       setAppliedCents(result.amountCents || amountCents);
@@ -97,7 +98,9 @@ function CheckoutBlock() {
 
   const tier = state.data.member.cardTier;
   const estimatedCents = Math.round(subtotal * 100 * (TIER_RATE[tier] || 0));
-  const availableCents = Math.max(0, state.data.member.availableCents - appliedCents);
+  const nekudotAvailableCents = Math.max(0, state.data.member.availableCents - (paymentWallet === "nekudot" ? appliedCents : 0));
+  const voucherAvailableCents = Math.max(0, (state.data.communityVoucher?.availableCents || 0) - (paymentWallet === "voucher" ? appliedCents : 0));
+  const availableCents = paymentWallet === "voucher" ? voucherAvailableCents : nekudotAvailableCents;
   const maxRedeemCents = Math.max(0, Math.min(availableCents, Math.round(subtotal * 100)));
 
   return (
@@ -106,12 +109,13 @@ function CheckoutBlock() {
         Tu compra está vinculada a tu tarjeta {tierLabel(tier)}. El saldo se acredita cuando Shopify confirma el pago.
       </s-banner>
       {appliedCents > 0 ? (
-        <s-banner tone="success" heading={`${money(appliedCents)} en Nekudot aplicados`}>
+        <s-banner tone="success" heading={`${money(appliedCents)} en ${paymentWallet === "voucher" ? "Vales comunitarios" : "Nekudot"} aplicados`}>
           El descuento ya fue restado de los productos de este pedido.
         </s-banner>
       ) : (
-        <s-section heading={`Usa tus Nekudot · Disponible ${money(availableCents)}`}>
+        <s-section heading={`Paga con ${paymentWallet === "voucher" ? "Vales comunitarios" : "Nekudot"} · Disponible ${money(availableCents)}`}>
           <s-stack direction="block" gap="base">
+            {state.data.communityVoucher ? <s-stack direction="inline" gap="base"><s-button variant={paymentWallet === "nekudot" ? "primary" : "secondary"} onClick={() => { setPaymentWallet("nekudot"); setAmount(""); setMessage(""); }}>Nekudot · {money(nekudotAvailableCents)}</s-button><s-button variant={paymentWallet === "voucher" ? "primary" : "secondary"} onClick={() => { setPaymentWallet("voucher"); setAmount(""); setMessage(""); }}>Vales · {money(voucherAvailableCents)}</s-button></s-stack> : null}
             <s-text-field
               label="Cantidad a descontar (MXN)"
               value={amount}
@@ -121,10 +125,10 @@ function CheckoutBlock() {
               error={message || undefined}
             />
             <s-button variant="primary" disabled={busy || maxRedeemCents < 100} onClick={() => redeem(maxRedeemCents)}>
-              {busy ? "Aplicando…" : "Aplicar Nekudot al pedido"}
+              {busy ? "Aplicando…" : `Aplicar ${paymentWallet === "voucher" ? "Vales" : "Nekudot"} al pedido`}
             </s-button>
             <s-text appearance="subdued">
-              Máximo para productos: {money(maxRedeemCents)}. El envío de $70 se paga siempre por separado y no puede cubrirse con Nekudot.
+              Máximo para productos: {money(maxRedeemCents)}. El envío se paga siempre por separado y no se descuenta de estos monederos.
             </s-text>
           </s-stack>
         </s-section>

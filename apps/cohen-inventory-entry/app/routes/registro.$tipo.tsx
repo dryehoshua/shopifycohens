@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
-import { data as responseData, Form, Link, redirect, useActionData, useLoaderData, useParams, useSearchParams } from "react-router";
+import { data as responseData, Form, redirect, useActionData, useLoaderData, useParams, useSearchParams } from "react-router";
 import { useEffect, useState } from "react";
 import stylesheet from "../nekudot-public.css?url";
 import { NEKUDOT_COMMUNITIES } from "../nekudot-domain";
@@ -123,6 +123,11 @@ export default function RegistrationPage() {
   const [lastName, setLastName] = useState("");
   const [community, setCommunity] = useState("");
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview); }, [photoPreview]);
+  useEffect(() => {
+    if (!result || result.checkoutUrl) return;
+    const timer = window.setTimeout(() => window.top?.location.assign("https://account.cohenskosher.com"), 1800);
+    return () => window.clearTimeout(timer);
+  }, [result]);
   const liveName = `${firstName} ${lastName}`.trim() || (submitted ? `${submitted.firstName} ${submitted.lastName}` : "");
   const referredIbCode = submitted?.ibCode || String(searchParams.get("ib") || "").slice(0, 40);
   const description = tipo === "plata"
@@ -138,7 +143,7 @@ export default function RegistrationPage() {
     <div className="nk-grid">
       <section className="nk-panel">
         <p className="nk-eyebrow">Registro</p><h1>{option.title}</h1><p className="nk-lead">{description}</p>
-        {result ? <div className="nk-status">{result.status === "PENDING_PAYMENT" ? "Tu cliente fue creado. La membresía Golden quedará activa al autorizar la suscripción mensual." : "Registro completado. Tu tarjeta digital ya está lista."} {result.ibName ? <>Tu IB es <strong>{result.ibName}</strong>. </> : null}{result.checkoutUrl ? <><a className="nk-button" href={result.checkoutUrl}>Activar suscripción Golden</a> </> : null}<Link to="/nekudot">Abrir Nekudot</Link>.</div> : verification ? <div className="nk-existing-verify">
+        {result ? <div className="nk-status">{result.status === "PENDING_PAYMENT" ? "Tu cliente fue creado. La membresía Golden quedará activa al autorizar la suscripción mensual." : "Registro completado. Tu tarjeta digital ya está lista; te llevaremos a tu cuenta Cohen's."} {result.ibName ? <>Tu IB es <strong>{result.ibName}</strong>. </> : null}{result.checkoutUrl ? <><a className="nk-button" href={result.checkoutUrl} target="_top">Activar suscripción Golden</a> </> : <a className="nk-button" href="https://account.cohenskosher.com" target="_top">Abrir mi cuenta Cohen&apos;s</a>}</div> : verification ? <div className="nk-existing-verify">
           <p className="nk-eyebrow">CONFIRMA TU CUENTA</p><h2>Te enviamos un código</h2><p className="nk-lead">Escríbelo para abrir de forma segura el registro cuyo teléfono termina en {verification.phoneHint}.</p>
           <Form method="post" className="nk-form"><input type="hidden" name="intent" value="verify-existing" /><input type="hidden" name="matchToken" value={verification.matchToken} /><input type="hidden" name="phoneHint" value={verification.phoneHint} /><label className="nk-field full">Código SMS<input name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4,10}" /></label>{data && "error" in data && data.error ? <div className="nk-status error">{String(data.error)}</div> : null}<div className="nk-actions"><button className="nk-button">Confirmar y abrir mis puntos</button></div></Form>
         </div> : <Form method="post" encType="multipart/form-data" className="nk-form">

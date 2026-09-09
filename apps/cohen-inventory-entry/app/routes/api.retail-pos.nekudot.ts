@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { assertRetailSameOrigin, currentRetailSession, retailPosJsonError } from "../retail-pos.server";
 import { lookupNekudotMember, NekudotError } from "../nekudot.server";
 import { cashbackBasisPointsForTier } from "../nekudot-domain";
+import { communityVoucherForMember } from "../community-wallet.server";
 
 function nekudotJsonError(error: unknown) {
   if (error instanceof NekudotError) {
@@ -34,12 +35,20 @@ function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) 
   };
 }
 
+async function memberWithVoucher(member: Awaited<ReturnType<typeof lookupNekudotMember>>) {
+  const voucher = await communityVoucherForMember(member.id);
+  return {
+    ...memberPayload(member),
+    communityVoucher: voucher ? { active: voucher.status === "ACTIVE", availableCents: voucher.availableCents, cardNumber: voucher.cardNumber } : null,
+  };
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   try {
     const session = await currentRetailSession(request);
     const credential = new URL(request.url).searchParams.get("credential");
     const member = await lookupNekudotMember(session!.shop, credential);
-    return Response.json({ ok: true, member: memberPayload(member) });
+    return Response.json({ ok: true, member: await memberWithVoucher(member) });
   } catch (error) {
     return nekudotJsonError(error);
   }
@@ -54,7 +63,7 @@ export async function action({ request }: ActionFunctionArgs) {
       return Response.json({ ok: false, error: "Acción no válida." }, { status: 405 });
     }
     const member = await lookupNekudotMember(session!.shop, body.credential);
-    return Response.json({ ok: true, member: memberPayload(member) });
+    return Response.json({ ok: true, member: await memberWithVoucher(member) });
   } catch (error) {
     return nekudotJsonError(error);
   }

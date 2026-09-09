@@ -652,8 +652,10 @@ function attribute(attributes: OrderInput["customAttributes"], key: string) {
 export async function reconcileNekudotOrder(input: OrderInput) {
   const memberIdAttribute = attribute(input.customAttributes, "nekudot_member_id");
   const redemptionId = attribute(input.customAttributes, "nekudot_redemption_id");
+  const voucherRedemptionId = attribute(input.customAttributes, "community_voucher_redemption_id");
   const onlineDiscountCode = input.discountCodes?.find((code) => /^NEKUDOT-[A-F0-9]{16}$/i.test(code)) ?? null;
-  const [identity, attributedMember, attributedReservation, codedReservation, existingAccrual] = await Promise.all([
+  const voucherDiscountCode = input.discountCodes?.find((code) => /^VALES-[A-F0-9]{16}$/i.test(code)) ?? null;
+  const [identity, attributedMember, attributedReservation, codedReservation, voucherReservation, existingAccrual] = await Promise.all([
     input.customerId
       ? db.nekudotCustomerIdentity.findUnique({ where: { shop_shopifyCustomerId: { shop: input.shop, shopifyCustomerId: input.customerId } } })
       : null,
@@ -665,6 +667,12 @@ export async function reconcileNekudotOrder(input: OrderInput) {
       : null,
     onlineDiscountCode
       ? db.nekudotRedemption.findFirst({ where: { discountCode: onlineDiscountCode, shop: input.shop }, include: { member: true } })
+      : null,
+    voucherRedemptionId || voucherDiscountCode
+      ? db.communityVoucherRedemption.findFirst({ where: { shop: input.shop, OR: [
+          ...(voucherRedemptionId ? [{ id: voucherRedemptionId }] : []),
+          ...(voucherDiscountCode ? [{ discountCode: voucherDiscountCode }] : []),
+        ] }, include: { wallet: true } })
       : null,
     db.nekudotOrderAccrual.findUnique({ where: { shop_shopifyOrderId: { shop: input.shop, shopifyOrderId: input.shopifyOrderId } } }),
   ]);
@@ -701,6 +709,7 @@ export async function reconcileNekudotOrder(input: OrderInput) {
     originalPurchaseCents,
     cancelled: input.cancelled,
     redemptionId: reservation?.id ?? redemptionId,
+    voucherRedemptionId: voucherReservation?.id ?? null,
   })).digest("hex");
 
   return db.$transaction(async (transaction) => {
@@ -819,6 +828,55 @@ export async function reconcileNekudotOrder(input: OrderInput) {
               status: targetRestoredCents >= reservation.amountCents ? "RESTORED" : "APPLIED",
             },
           });
+        }
+      }
+    }
+
+    if (voucherReservation) {
+      if (input.cancelled && voucherReservation.status === "RESERVED") {
+        await transaction.communityVoucherWallet.update({ where: { id: voucherReservation.walletId }, data: { reservedCents: { decrement: voucherReservation.amountCents } } });
+        await transaction.communityVoucherRedemption.update({ where: { id: voucherReservation.id }, data: { status: "CANCELLED", cancelledAt: new Date(), shopifyOrderId: input.shopifyOrderId } });
+      } else if (input.cancelled && ["APPLIED", "RESTORED"].includes(voucherReservation.status)) {
+        const restoreDelta = voucherReservation.amountCents - voucherReservation.restoredCents;
+        if (restoreDelta) {
+          const wallet = await transaction.communityVoucherWallet.update({ where: { id: voucherReservation.walletId }, data: { balanceCents: { increment: restoreDelta }, lifetimeRedeemedCents: { decrement: restoreDelta } } });
+          await transaction.communityVoucherLedgerEntry.create({ data: {
+            programKey: NEKUDOT_PROGRAM_KEY, walletId: wallet.id, type: "REDEMPTION_REVERSAL", amountCents: restoreDelta,
+            balanceAfterCents: wallet.balanceCents, source: "SHOPIFY_ORDER", sourceId: input.shopifyOrderId,
+            idempotencyKey: `voucher:${voucherReservation.id}:cancelled`, description: `Restitución de vales por cancelación de ${input.orderName}`,
+          } });
+        }
+        await transaction.communityVoucherRedemption.update({ where: { id: voucherReservation.id }, data: { status: "CANCELLED", restoredCents: voucherReservation.amountCents, cancelledAt: new Date(), shopifyOrderId: input.shopifyOrderId } });
+      } else if (input.eligibleFinancialStatus && voucherReservation.status === "RESERVED") {
+        const chargeCents = voucherReservation.discountCode
+          ? appliedOnlineRedemptionCents(voucherReservation.amountCents, Math.max(0, input.totalDiscountCents ?? 0))
+          : voucherReservation.amountCents;
+        const wallet = await transaction.communityVoucherWallet.update({ where: { id: voucherReservation.walletId }, data: {
+          reservedCents: { decrement: voucherReservation.amountCents },
+          ...(chargeCents ? { balanceCents: { decrement: chargeCents }, lifetimeRedeemedCents: { increment: chargeCents } } : {}),
+        } });
+        if (chargeCents) await transaction.communityVoucherLedgerEntry.create({ data: {
+          programKey: NEKUDOT_PROGRAM_KEY, walletId: wallet.id, type: "REDEEM", amountCents: -chargeCents,
+          balanceAfterCents: wallet.balanceCents, source: "SHOPIFY_ORDER", sourceId: input.shopifyOrderId,
+          idempotencyKey: `voucher:${voucherReservation.id}:applied`, description: `Vales usados en ${input.orderName}`,
+        } });
+        await transaction.communityVoucherRedemption.update({ where: { id: voucherReservation.id }, data: {
+          amountCents: chargeCents, status: chargeCents ? "APPLIED" : "CANCELLED", appliedAt: chargeCents ? new Date() : null,
+          cancelledAt: chargeCents ? null : new Date(), shopifyOrderId: input.shopifyOrderId,
+        } });
+      } else if (input.eligibleFinancialStatus && ["APPLIED", "RESTORED"].includes(voucherReservation.status)) {
+        const targetRestoredCents = calculateRestoredRedemptionCents(voucherReservation.amountCents, originalPurchaseCents, purchaseCents);
+        const restoreDelta = targetRestoredCents - voucherReservation.restoredCents;
+        if (restoreDelta) {
+          const wallet = await transaction.communityVoucherWallet.update({ where: { id: voucherReservation.walletId }, data: { balanceCents: { increment: restoreDelta }, lifetimeRedeemedCents: { decrement: restoreDelta } } });
+          await transaction.communityVoucherLedgerEntry.create({ data: {
+            programKey: NEKUDOT_PROGRAM_KEY, walletId: wallet.id, type: restoreDelta > 0 ? "REDEMPTION_REFUND" : "REDEMPTION_ADJUSTMENT",
+            amountCents: restoreDelta, balanceAfterCents: wallet.balanceCents, source: "SHOPIFY_ORDER", sourceId: input.shopifyOrderId,
+            idempotencyKey: `voucher:${voucherReservation.id}:refund:${hash}`, description: `Ajuste de vales por devolución de ${input.orderName}`,
+          } });
+          await transaction.communityVoucherRedemption.update({ where: { id: voucherReservation.id }, data: {
+            restoredCents: targetRestoredCents, status: targetRestoredCents >= voucherReservation.amountCents ? "RESTORED" : "APPLIED",
+          } });
         }
       }
     }

@@ -23,6 +23,11 @@ import {
 import { cashbackBasisPointsForTier } from "./nekudot-domain";
 import { parseOptionalNekudotMoney } from "./pos-nekudot-money";
 import {
+  cancelCommunityVoucherReservation,
+  renewCommunityVoucherReservation,
+  reserveCommunityVoucher,
+} from "./community-wallet.server";
+import {
   resolvePosMembershipAssignment,
   updateAssignedMemberProfile,
 } from "./pos-membership-profile.server";
@@ -691,15 +696,29 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
   let nekudotRedemption = sale?.nekudotRedemptionId
     ? await db.nekudotRedemption.findUnique({ where: { id: sale.nekudotRedemptionId } })
     : null;
+  let communityVoucherRedemption = sale?.communityVoucherRedemptionId
+    ? await db.communityVoucherRedemption.findUnique({ where: { id: sale.communityVoucherRedemptionId } })
+    : null;
   if (sale && nekudotRedemption && nekudotRedemption.status !== "APPLIED") {
     nekudotRedemption = await renewNekudotReservation(session!.shop, nekudotRedemption.id);
+  }
+  if (sale && communityVoucherRedemption && communityVoucherRedemption.status !== "APPLIED") {
+    communityVoucherRedemption = await renewCommunityVoucherReservation(session!.shop, communityVoucherRedemption.id);
   }
   if (!sale && String(raw.nekudotCredential ?? "").trim()) {
     nekudotMember = await lookupNekudotMember(session!.shop, raw.nekudotCredential);
     const requestedAmount = String(raw.nekudotRedeemAmount ?? "").trim();
     const requestedCents = parseOptionalNekudotMoney(requestedAmount);
     if (requestedCents > grossCents - manualDiscountCents) throw new RetailPosError("El canje supera el total después del descuento.", 409, "NEKUDOT_EXCEEDS_TOTAL");
-    if (requestedCents) {
+    if (requestedCents && String(raw.redemptionWallet || "nekudot") === "voucher") {
+      communityVoucherRedemption = await reserveCommunityVoucher({
+        shop: session!.shop,
+        memberId: nekudotMember.id,
+        amount: requestedAmount,
+        cartReference: idempotencyKey,
+        idempotencyKey: `retail-voucher:${idempotencyKey}`,
+      });
+    } else if (requestedCents) {
       nekudotRedemption = await reserveNekudot({
         shop: session!.shop,
         rawToken: raw.nekudotCredential,
@@ -711,7 +730,8 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
     }
   }
   const nekudotRedeemedCents = nekudotRedemption?.amountCents ?? 0;
-  const totalCents = grossCents - manualDiscountCents - nekudotRedeemedCents;
+  const communityVoucherRedeemedCents = communityVoucherRedemption?.amountCents ?? 0;
+  const totalCents = grossCents - manualDiscountCents - nekudotRedeemedCents - communityVoucherRedeemedCents;
   const payment = sale
     ? {
         method: sale.paymentMethod,
@@ -756,11 +776,14 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
           nekudotMemberId: nekudotMember?.id ?? null,
           nekudotRedemptionId: nekudotRedemption?.id ?? null,
           nekudotRedeemedCents,
+          communityVoucherRedemptionId: communityVoucherRedemption?.id ?? null,
+          communityVoucherRedeemedCents,
         },
         include: { staff: { select: { name: true } } },
       });
     } catch (error) {
       if (nekudotRedemption) await cancelNekudotReservation(session!.shop, nekudotRedemption.id).catch(() => undefined);
+      if (communityVoucherRedemption) await cancelCommunityVoucherReservation(session!.shop, communityVoucherRedemption.id).catch(() => undefined);
       throw error;
     }
   }
@@ -779,13 +802,14 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
       ...(sale.cashPaidCents > 0 ? [{ kind: "SALE", status: "SUCCESS", gateway: "Cash", locationId: location.id, amountSet: { shopMoney: { amount: (sale.cashPaidCents / 100).toFixed(2), currencyCode } } }] : []),
       ...(sale.terminalPaidCents > 0 ? [{ kind: "SALE", status: "SUCCESS", gateway: "External card terminal", locationId: location.id, amountSet: { shopMoney: { amount: (sale.terminalPaidCents / 100).toFixed(2), currencyCode } } }] : []),
     ];
-    const totalDiscountCents = sale.discountCents + sale.nekudotRedeemedCents;
+    const totalDiscountCents = sale.discountCents + sale.nekudotRedeemedCents + sale.communityVoucherRedeemedCents;
     const customAttributes = [
       { key: "retail_pos_sale_id", value: sale.id },
       { key: "retail_pos_staff", value: sale.staff.name },
       { key: "retail_pos_payment", value: sale.paymentMethod },
       ...(nekudotMember ? [{ key: "nekudot_member_id", value: nekudotMember.id }] : []),
       ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
+      ...(communityVoucherRedemption ? [{ key: "community_voucher_redemption_id", value: communityVoucherRedemption.id }] : []),
     ];
     const result = await graphql<{
       orderCreate: { order: { id: string; name: string } | null; userErrors: Array<{ message: string }> };
@@ -808,7 +832,7 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
         ...(totalDiscountCents ? {
           discountCode: {
             itemFixedDiscountCode: {
-              code: sale.nekudotRedeemedCents ? `NEKUDOT-${sale.id.slice(-8).toUpperCase()}` : `RETAIL-${sale.id.slice(-8).toUpperCase()}`,
+              code: sale.communityVoucherRedeemedCents ? `VALES-${sale.id.slice(-8).toUpperCase()}` : sale.nekudotRedeemedCents ? `NEKUDOT-${sale.id.slice(-8).toUpperCase()}` : `RETAIL-${sale.id.slice(-8).toUpperCase()}`,
               amountSet: { shopMoney: { amount: (totalDiscountCents / 100).toFixed(2), currencyCode } },
             },
           },

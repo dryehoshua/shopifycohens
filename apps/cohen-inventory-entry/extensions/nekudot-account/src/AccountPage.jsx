@@ -9,19 +9,30 @@ export default async () => render(<AccountPage />, document.body);
 function AccountPage() {
   const state = useNekudotAccount();
   const [activeSection, setActiveSection] = useState("nekudot");
-  if (state.loading || state.error || !state.data?.registered) {
+  if (state.loading || state.error) {
     return <s-page heading="Tarjeta Nekudot"><s-box padding="base"><LoadingOrError state={state} /></s-box></s-page>;
   }
+  if (!state.data?.registered) return <OnboardingPage state={state} />;
   const { member, accruals, ledger, ibWallet, communityVoucher, portalUrl } = state.data;
   const isVoucher = member.cardTier === "VOUCHER";
-  return <s-page heading={isVoucher ? "Tarjeta de vales" : "Tarjeta Nekudot"}>
+  return <s-page heading="Mi cuenta Cohen's" subheading="Compras, tarjetas y beneficios en un solo lugar">
     <s-stack direction="block" gap="large-200">
       <s-section heading={`Hola, ${member.displayName}`}>
-        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gap="base">
-          <Metric label={isVoucher ? "Saldo de vales" : "Disponible para comprar"} value={money(member.availableCents)} />
-          <Metric label="Tu tarjeta" value={tierLabel(member.cardTier)} />
-          <Metric label="Ganado históricamente" value={money(member.lifetimeEarnedCents)} />
-        </s-grid>
+        <s-stack direction="block" gap="base">
+          <s-stack direction="inline" gap="base" alignItems="center">
+            <s-avatar src={member.photoUrl || undefined} initials={member.displayName.slice(0, 2).toUpperCase()} accessibilityLabel={`Perfil de ${member.displayName}`} size="large" />
+            <s-stack direction="block" gap="small-100">
+              <s-heading>Bienvenido a Cohen's</s-heading>
+              <s-text>{journeyMessage(member, ibWallet, communityVoucher)}</s-text>
+            </s-stack>
+          </s-stack>
+          <s-button href="https://cohenskosher.com/collections/all" variant="primary">Comenzar a comprar</s-button>
+          <s-grid gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gap="base">
+            <Metric label={isVoucher ? "Saldo de vales" : "Disponible para comprar"} value={money(member.availableCents)} />
+            <Metric label="Tu tarjeta" value={tierLabel(member.cardTier)} />
+            <Metric label="Ganado históricamente" value={money(member.lifetimeEarnedCents)} />
+          </s-grid>
+        </s-stack>
       </s-section>
 
       <s-section heading="Mi portal Cohen's">
@@ -53,6 +64,7 @@ function AccountPage() {
             </s-stack>
           </s-box>
           {!isVoucher ? <s-button href={portalUrl} variant="primary">Usar Nekudot en una compra</s-button> : null}
+          <PhotoEditor member={member} onReload={state.reload} />
         </s-stack>
       </s-section> : null}
 
@@ -73,6 +85,122 @@ function AccountPage() {
       </s-section> : null}
     </s-stack>
   </s-page>;
+}
+
+function journeyMessage(member, ibWallet, voucher) {
+  const parts = [];
+  if (member.cardTier === "SILVER") parts.push("Tu tarjeta Plata devuelve 2% en Nekudot por compras elegibles.");
+  if (member.cardTier === "BLUE") parts.push("Tu tarjeta Blue devuelve 5% en Nekudot.");
+  if (member.cardTier === "GOLDEN") parts.push("Tu tarjeta Golden devuelve 8% mientras tu membresía esté activa.");
+  if (ibWallet) parts.push(`Tu programa de referidos ${ibWallet.code} también está activo.`);
+  if (voucher) parts.push(`Tienes ${money(voucher.availableCents)} en Vales comunitarios.`);
+  return parts.join(" ") || "Aquí encontrarás tus beneficios Cohen's.";
+}
+
+function OnboardingPage({ state }) {
+  const suggested = state.data?.profile || {};
+  const [form, setForm] = useState({
+    firstName: suggested.firstName || "",
+    lastName: suggested.lastName || "",
+    phone: suggested.phone || "",
+    community: "",
+    address1: suggested.address1 || "",
+    address2: suggested.address2 || "",
+    city: suggested.city || "",
+    province: suggested.province || "",
+    zip: suggested.zip || "",
+    deliveryInstructions: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.currentTarget.value }));
+
+  async function submit() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await postNekudotAction("complete_profile", form);
+      state.reload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No pudimos completar tu perfil.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <s-page heading="Completa tu perfil Cohen's" subheading={`Tu acceso ya está creado con ${suggested.email || "tu correo"}`}>
+    <s-stack direction="block" gap="large-200">
+      <s-banner tone="info" heading="Un solo perfil para comprar y recibir Nekudot">
+        Sólo necesitamos estos datos una vez. Se guardarán en tu cliente Shopify y activaremos gratis tu tarjeta Plata con 2% de cashback.
+      </s-banner>
+      <s-section heading="Datos personales">
+        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))" gap="base">
+          <s-text-field label="Nombre" value={form.firstName} required onInput={set("firstName")} />
+          <s-text-field label="Apellidos" value={form.lastName} required onInput={set("lastName")} />
+          <s-phone-field label="Teléfono" value={form.phone} required onInput={set("phone")} />
+          <s-select label="Comunidad" value={form.community} required onChange={set("community")}>
+            <s-option value="">Selecciona tu comunidad</s-option>
+            {COMMUNITIES.map((item) => <s-option key={item} value={item}>{item}</s-option>)}
+          </s-select>
+        </s-grid>
+      </s-section>
+      <s-section heading="Domicilio de entrega">
+        <s-stack direction="block" gap="base">
+          <s-text-field label="Calle y número" value={form.address1} required onInput={set("address1")} />
+          <s-text-field label="Interior, edificio o referencia" value={form.address2} onInput={set("address2")} />
+          <s-grid gridTemplateColumns="repeat(auto-fit, minmax(180px, 1fr))" gap="base">
+            <s-text-field label="Ciudad o alcaldía" value={form.city} required onInput={set("city")} />
+            <s-text-field label="Estado (ej. CDMX)" value={form.province} required onInput={set("province")} />
+            <s-text-field label="Código postal" value={form.zip} required inputMode="numeric" onInput={set("zip")} />
+          </s-grid>
+          <s-text-area label="Indicaciones de entrega" value={form.deliveryInstructions} onInput={set("deliveryInstructions")} />
+        </s-stack>
+      </s-section>
+      {message ? <s-banner tone="critical">{message}</s-banner> : null}
+      <s-button variant="primary" disabled={busy || !form.firstName || !form.lastName || !form.phone || !form.community || !form.address1 || !form.city || !form.province || !form.zip} onClick={submit}>
+        {busy ? "Guardando…" : "Guardar perfil y activar Nekudot Plata"}
+      </s-button>
+      <s-text color="subdued">Después podrás agregar una fotografía, activar Vales comunitarios o abrir tu Programa de referidos desde esta misma cuenta.</s-text>
+    </s-stack>
+  </s-page>;
+}
+
+function PhotoEditor({ member, onReload }) {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function upload() {
+    if (!file) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (file.size > 4 * 1024 * 1024) throw new Error("La foto debe pesar menos de 4 MB.");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+      }
+      await postNekudotAction("update_photo", { photoName: file.name, photoType: file.type, photoData: btoa(binary) });
+      setFile(null);
+      setMessage("Tu fotografía quedó guardada.");
+      onReload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No pudimos guardar la fotografía.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <s-section heading={member.photoUrl ? "Cambiar fotografía" : "Agregar fotografía"}>
+    <s-stack direction="block" gap="base">
+      <s-drop-zone label="Selecciona una foto JPG, PNG o WebP" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={(event) => setFile(event.currentTarget.files?.[0] || null)} />
+      {file ? <s-text>{file.name}</s-text> : null}
+      {message ? <s-banner tone={message.includes("guardada") ? "success" : "critical"}>{message}</s-banner> : null}
+      <s-button variant="secondary" disabled={busy || !file} onClick={upload}>{busy ? "Subiendo…" : "Guardar fotografía"}</s-button>
+      <s-text color="subdued">La foto aparecerá en tu tarjeta Cohen's y junto al saludo de este portal. Shopify no permite sustituir el icono global de su encabezado.</s-text>
+    </s-stack>
+  </s-section>;
 }
 
 function CommunityVoucherWallet({ wallet, member, onReload }) {

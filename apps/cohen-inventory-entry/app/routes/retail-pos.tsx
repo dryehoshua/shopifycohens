@@ -111,6 +111,7 @@ type Member = {
   availableCents: number;
   broker: { displayName: string; code: string } | null;
   customer: Customer | null;
+  communityVoucher: { active: boolean; availableCents: number; cardNumber: string } | null;
 };
 type ReceiptItem = CafeReceiptItem & { variantId?: string; barcode?: string | null; vendor?: string };
 type Sale = {
@@ -127,6 +128,7 @@ type Sale = {
   cashReceivedCents?: number | null;
   changeCents: number;
   nekudotRedeemedCents: number;
+  communityVoucherRedeemedCents: number;
   customerName?: string | null;
   customerEmail?: string | null;
   currencyCode: string;
@@ -147,7 +149,20 @@ type SuspendedSale = {
   customer: Customer | null;
   discountAmount: string;
 };
-type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | "reader" | "printer" | null;
+type Drawer = "orders" | "shift" | "staff" | "customers" | "catalog" | "suspended" | "reader" | "printer" | "vouchers" | null;
+
+type VoucherRecipient = {
+  memberId: string;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  balanceCents: number;
+  availableCents: number;
+};
+type VoucherDashboard = {
+  fund: { balanceCents: number; lifetimeLoadedCents: number; lifetimeGrantedCents: number };
+  recipients: VoucherRecipient[];
+};
 
 type CatalogMeta = {
   productCount: number;
@@ -274,7 +289,7 @@ function paymentLabel(sale: Sale) {
   if (sale.paymentMethod === "CASH") return "Efectivo";
   if (sale.paymentMethod === "EXTERNAL_CARD") return "Terminal";
   if (sale.paymentMethod === "SPLIT") return "Pago mixto";
-  return "Nekudot";
+  return sale.communityVoucherRedeemedCents ? "Vales comunitarios" : "Nekudot";
 }
 
 function buildReceipt(sale: Sale) {
@@ -295,6 +310,7 @@ function buildReceipt(sale: Sale) {
   text(receiptColumns("Artículos", formatMoney(sale.grossCents)));
   if (sale.discountCents) text(receiptColumns("Descuento", `-${formatMoney(sale.discountCents)}`));
   if (sale.nekudotRedeemedCents) text(receiptColumns("Nekudot", `-${formatMoney(sale.nekudotRedeemedCents)}`));
+  if (sale.communityVoucherRedeemedCents) text(receiptColumns("Vales", `-${formatMoney(sale.communityVoucherRedeemedCents)}`));
   text(receiptColumns("IVA incluido", formatMoney(sale.taxCents)));
   command(27, 69, 1, 29, 33, 17); text(receiptColumns("TOTAL", formatMoney(sale.totalCents))); command(29, 33, 0, 27, 69, 0);
   text(receiptColumns("Pago", paymentLabel(sale)));
@@ -326,6 +342,7 @@ function buildLocalReceipt(sale: Sale): LocalPrinterDocument {
   lines.push({ text: receiptColumns("Artículos", formatMoney(sale.grossCents)) });
   if (sale.discountCents) lines.push({ text: receiptColumns("Descuento", `-${formatMoney(sale.discountCents)}`) });
   if (sale.nekudotRedeemedCents) lines.push({ text: receiptColumns("Nekudot", `-${formatMoney(sale.nekudotRedeemedCents)}`) });
+  if (sale.communityVoucherRedeemedCents) lines.push({ text: receiptColumns("Vales", `-${formatMoney(sale.communityVoucherRedeemedCents)}`) });
   lines.push({ text: receiptColumns("IVA incluido", formatMoney(sale.taxCents)) });
   lines.push({ text: receiptColumns("TOTAL", formatMoney(sale.totalCents)), bold: true, size: 12, spaceAfter: 2 });
   lines.push({ text: receiptColumns("Pago", paymentLabel(sale)) });
@@ -371,6 +388,7 @@ export default function RetailPos() {
   const [member, setMember] = useState<Member | null>(null);
   const [credential, setCredential] = useState("");
   const [nekudotAmount, setNekudotAmount] = useState("0");
+  const [redemptionWallet, setRedemptionWallet] = useState<"nekudot" | "voucher">("nekudot");
   const [useMaximumNekudot, setUseMaximumNekudot] = useState(false);
   const [discountAmount, setDiscountAmount] = useState("0");
   const [openingCash, setOpeningCash] = useState("0");
@@ -389,6 +407,11 @@ export default function RetailPos() {
   const [cashCheckoutOpen, setCashCheckoutOpen] = useState(false);
   const [cashReceivedInput, setCashReceivedInput] = useState("");
   const [cardAssignmentOpen, setCardAssignmentOpen] = useState(false);
+  const [voucherDashboard, setVoucherDashboard] = useState<VoucherDashboard | null>(null);
+  const [voucherSearch, setVoucherSearch] = useState("");
+  const [voucherRecipient, setVoucherRecipient] = useState<VoucherRecipient | null>(null);
+  const [voucherAmount, setVoucherAmount] = useState("");
+  const [voucherSource, setVoucherSource] = useState("");
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
   const searchRef = useRef<HTMLInputElement>(null);
@@ -406,6 +429,16 @@ export default function RetailPos() {
       setCustomersLoading(false);
     }
   }, []);
+
+  const loadVouchers = useCallback(async () => {
+    const result = await api<VoucherDashboard>("/api/retail-pos/vouchers");
+    setVoucherDashboard(result);
+  }, []);
+
+  useEffect(() => {
+    if (drawer !== "vouchers") return;
+    void loadVouchers().catch((error) => setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudieron cargar los vales." }));
+  }, [drawer, loadVouchers]);
 
   useEffect(() => {
     if (!cashCheckoutOpen) return;
@@ -536,11 +569,16 @@ export default function RetailPos() {
     return [item.displayName, item.phone || "", item.email || ""]
       .some((value) => value.toLocaleLowerCase("es-MX").includes(normalizedCustomerSearch));
   }), [customers, normalizedCustomerSearch]);
+  const visibleVoucherRecipients = useMemo(() => {
+    const query = voucherSearch.trim().toLocaleLowerCase("es-MX");
+    return (voucherDashboard?.recipients || []).filter((item) => !query || [item.displayName, item.email || "", item.phone || ""].some((value) => value.toLocaleLowerCase("es-MX").includes(query)));
+  }, [voucherDashboard, voucherSearch]);
   const grossCents = useMemo(() => cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0), [cart]);
   const discountCents = Math.min(moneyInputCents(discountAmount), Math.max(0, grossCents - 1));
   const afterDiscountCents = grossCents - discountCents;
+  const selectedWalletBalanceCents = redemptionWallet === "voucher" ? member?.communityVoucher?.availableCents || 0 : member?.availableCents || 0;
   const maximumNekudotCents = member
-    ? maximumNekudotRedemptionCents(afterDiscountCents, member.availableCents)
+    ? maximumNekudotRedemptionCents(afterDiscountCents, selectedWalletBalanceCents)
     : 0;
   const requestedNekudotCents = useMaximumNekudot ? maximumNekudotCents : moneyInputCents(nekudotAmount);
   const appliedNekudotCents = member ? Math.min(requestedNekudotCents, maximumNekudotCents) : 0;
@@ -597,7 +635,7 @@ export default function RetailPos() {
   }
 
   function clearCurrentSale() {
-    setCart([]); setCustomer(null); setMember(null); setCredential(""); setNekudotAmount("0"); setUseMaximumNekudot(false); setDiscountAmount("0"); setLastScannedVariantId(null);
+    setCart([]); setCustomer(null); setMember(null); setCredential(""); setNekudotAmount("0"); setRedemptionWallet("nekudot"); setUseMaximumNekudot(false); setDiscountAmount("0"); setLastScannedVariantId(null);
     saleKey.current = newSaleKey();
   }
 
@@ -872,6 +910,7 @@ export default function RetailPos() {
           customerId: customer?.id,
           items: cart.map((line) => ({ variantId: line.variant.id, quantity: line.quantity })),
           ...(member ? { nekudotCredential: credential, nekudotRedeemAmount: (appliedNekudotCents / 100).toFixed(2) } : {}),
+          ...(member ? { redemptionWallet } : {}),
         }),
       });
       clearCurrentSale(); setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
@@ -968,6 +1007,30 @@ export default function RetailPos() {
     window.location.replace("/retail-pos");
   }
 
+  async function submitVoucherOperation(intent: "load" | "allocate") {
+    const amountCents = moneyInputCents(voucherAmount);
+    if (amountCents < 100) return setMessage({ tone: "error", text: "Escribe una cantidad válida desde $1.00." });
+    if (intent === "allocate" && !voucherRecipient) return setMessage({ tone: "error", text: "Selecciona a quién asignar el saldo." });
+    const managerPin = initial.staff?.role === "MANAGER" ? undefined : window.prompt("Ingresa el PIN del gerente para mover saldo comunitario:") || "";
+    setBusy(true);
+    try {
+      const result = await api<VoucherDashboard>("/api/retail-pos/vouchers", { method: "POST", body: JSON.stringify({
+        intent,
+        amount: voucherAmount,
+        sourceReference: voucherSource,
+        memberId: voucherRecipient?.memberId,
+        managerPin,
+        idempotencyKey: `voucher:${intent}:${newSaleKey()}`,
+      }) });
+      setVoucherDashboard(result);
+      setVoucherAmount("");
+      if (intent === "load") setVoucherSource("");
+      setMessage({ tone: "success", text: intent === "load" ? "Recarga agregada a la cuenta concentradora." : `Saldo asignado a ${voucherRecipient?.displayName}.` });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No se pudo mover el saldo." });
+    } finally { setBusy(false); }
+  }
+
   if (!initial.staff) return <Login sessionExpired={initial.sessionExpired} />;
 
   return <div className="retail-shell">
@@ -977,6 +1040,7 @@ export default function RetailPos() {
         <button className="retail-button dark" onClick={() => setDrawer("printer")}>Impresora <span>{printerName ? "USB" : ""}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("catalog")}>Catálogo</button>
         <button className="retail-button dark" onClick={() => setDrawer("customers")}>Clientes</button>
+        {initial.staff.role === "MANAGER" ? <button className="retail-button dark" onClick={() => setDrawer("vouchers")}>Vales</button> : null}
         <button className="retail-button dark" onClick={() => setDrawer("reader")}>Lectores</button>
         <button className="retail-button dark" onClick={() => setDrawer("suspended")}>En espera <span className="retail-counter">{suspendedSales.length}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("orders")}>Pedidos</button>
@@ -1023,13 +1087,13 @@ export default function RetailPos() {
           <button onClick={() => setDrawer("customers")}>{customer ? "Cambiar" : "Leer tarjeta"}</button>
         </section>
         {!member && drawer !== "customers" && drawer !== "reader" ? <NfcBridgeReader compact className="retail-checkout-reader" onCredential={(value) => { void identifyCredential(value); }} /> : null}
-        <div className={`retail-loyalty-summary ${activeMembership ? "active" : ""}`}><span>Nekudot Cohen&apos;s</span>{member ? <><strong>{formatMoney(member.availableCents)} disponibles · {membershipLabel(member)}</strong><small>Esta compra generará aproximadamente {formatMoney(activeCashbackCents)}.</small></> : customer?.member ? <><strong>{formatMoney(customer.member.availableCents)} disponibles · {membershipLabel(customer.member)}</strong><small>Identificado por teléfono/perfil; lee su tarjeta para canjear.</small></> : <><strong>2%, 5% u 8% de regreso</strong><small>Identifica al cliente antes de cobrar.</small></>}</div>
+        <div className={`retail-loyalty-summary ${activeMembership ? "active" : ""}`}><span>Beneficios Cohen&apos;s</span>{member ? <><strong>{formatMoney(member.availableCents)} Nekudot{member.communityVoucher ? ` · ${formatMoney(member.communityVoucher.availableCents)} Vales` : ""} · {membershipLabel(member)}</strong><small>Esta compra generará aproximadamente {formatMoney(activeCashbackCents)}.</small></> : customer?.member ? <><strong>{formatMoney(customer.member.availableCents)} disponibles · {membershipLabel(customer.member)}</strong><small>Identificado por teléfono/perfil; lee su tarjeta para canjear.</small></> : <><strong>2%, 5% u 8% de regreso</strong><small>Identifica al cliente antes de cobrar.</small></>}</div>
         <section className="retail-adjustments">
           <label>Descuento autorizado<input type="number" min="0" max={(Math.max(0, grossCents - 1) / 100).toFixed(2)} step="0.01" value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} /></label>
-          {member ? <label className="retail-nekudot-payment">Pagar con puntos<div><input type="text" inputMode="decimal" aria-label="Monto a pagar con puntos" placeholder="0.00" value={nekudotAmount} onChange={(event) => { setUseMaximumNekudot(false); setNekudotAmount(event.target.value); }} /><button type="button" className={useMaximumNekudot ? "active" : ""} aria-pressed={useMaximumNekudot} disabled={maximumNekudotCents <= 0} onClick={() => { setUseMaximumNekudot(true); setNekudotAmount((maximumNekudotCents / 100).toFixed(2)); }}>MAX</button></div><small>{maximumNekudotCents > 0 ? `Disponible para esta compra: ${formatMoney(maximumNekudotCents)}` : "Agrega artículos para aplicar tus puntos."}</small></label> : null}
+          {member ? <label className="retail-nekudot-payment">Pagar con saldo{member.communityVoucher ? <select value={redemptionWallet} onChange={(event) => { setRedemptionWallet(event.target.value as "nekudot" | "voucher"); setNekudotAmount("0"); setUseMaximumNekudot(false); }}><option value="nekudot">Nekudot · {formatMoney(member.availableCents)}</option><option value="voucher">Vales comunitarios · {formatMoney(member.communityVoucher.availableCents)}</option></select> : null}<div><input type="text" inputMode="decimal" aria-label="Monto a pagar con saldo" placeholder="0.00" value={nekudotAmount} onChange={(event) => { setUseMaximumNekudot(false); setNekudotAmount(event.target.value); }} /><button type="button" className={useMaximumNekudot ? "active" : ""} aria-pressed={useMaximumNekudot} disabled={maximumNekudotCents <= 0} onClick={() => { setUseMaximumNekudot(true); setNekudotAmount((maximumNekudotCents / 100).toFixed(2)); }}>MAX</button></div><small>{maximumNekudotCents > 0 ? `Disponible para esta compra: ${formatMoney(maximumNekudotCents)}` : `Sin saldo disponible en ${redemptionWallet === "voucher" ? "Vales" : "Nekudot"}.`}</small></label> : null}
         </section>
         <div className="retail-totals">
-          <div><span>{itemCount} artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>Nekudot usados</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
+          <div><span>{itemCount} artículos</span><span>{formatMoney(grossCents)}</span></div>{discountCents ? <div className="deduction"><span>Descuento</span><span>−{formatMoney(discountCents)}</span></div> : null}{appliedNekudotCents ? <div className="deduction"><span>{redemptionWallet === "voucher" ? "Vales usados" : "Nekudot usados"}</span><span>−{formatMoney(appliedNekudotCents)}</span></div> : null}
           <div className="grand"><span>A pagar</span><span>{formatMoney(amountDueCents)}</span></div><small>Pedido, cliente e inventario se registran en Shopify</small>
         </div>
         <div className="retail-payment-grid"><button className="cash" disabled={busy || !shift || !cart.length} onClick={openCashCheckout}><span>EFECTIVO</span><b>{formatMoney(amountDueCents)}</b></button><button className="card" disabled={busy || !shift || !cart.length} onClick={() => charge("EXTERNAL_CARD")}><span>TARJETA</span><b>Terminal</b></button><button className="split" disabled={busy || !shift || !cart.length || amountDueCents <= 1} onClick={() => charge("SPLIT")}><span>PAGO</span><b>Mixto</b></button></div>
@@ -1141,6 +1205,14 @@ export default function RetailPos() {
           </div>
         </section> : null}
         {customer ? <button className="retail-button danger wide" onClick={() => { setCustomer(null); setMember(null); setCredential(""); setDrawer(null); }}>Continuar sin cliente</button> : null}
+      </> : null}
+      {drawer === "vouchers" ? <><span className="retail-kicker">APOYO COMUNITARIO</span><h2>Recargas y distribución de vales</h2>
+        <div className="retail-selected"><strong>Cuenta concentradora: {formatMoney(voucherDashboard?.fund.balanceCents || 0)}</strong><span>Cargado históricamente: {formatMoney(voucherDashboard?.fund.lifetimeLoadedCents || 0)} · Distribuido: {formatMoney(voucherDashboard?.fund.lifetimeGrantedCents || 0)}</span></div>
+        <section className="retail-card-assignment"><span className="retail-kicker">RECARGAR FONDO</span><label>Importe<input type="number" min="1" step="0.01" value={voucherAmount} onChange={(event) => setVoucherAmount(event.target.value)} placeholder="0.00" /></label><label>Referencia del donativo o depósito<input value={voucherSource} onChange={(event) => setVoucherSource(event.target.value)} placeholder="Transferencia, recibo o donante" /></label><button type="button" className="primary" disabled={busy || moneyInputCents(voucherAmount) < 100} onClick={() => submitVoucherOperation("load")}>Agregar a cuenta concentradora</button></section>
+        <div className="retail-customer-search-heading"><strong>Asignar a una tarjeta de vales</strong><small>El movimiento queda registrado en ambos libros mayores.</small></div>
+        <div className="retail-customer-search"><input value={voucherSearch} onChange={(event) => setVoucherSearch(event.target.value)} placeholder="Buscar por nombre, teléfono o correo…" /></div>
+        <div className="retail-customer-results">{visibleVoucherRecipients.map((item) => <button type="button" key={item.memberId} className={voucherRecipient?.memberId === item.memberId ? "selected" : ""} onClick={() => setVoucherRecipient(item)}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin contacto"}</small><em className="active">{formatMoney(item.availableCents)} en vales</em></span><i>{voucherRecipient?.memberId === item.memberId ? "✓" : "›"}</i></button>)}</div>
+        {voucherRecipient ? <section className="retail-card-assignment"><span className="retail-kicker">TRANSFERIR SALDO</span><strong>{voucherRecipient.displayName}</strong><label>Importe<input type="number" min="1" max={((voucherDashboard?.fund.balanceCents || 0) / 100).toFixed(2)} step="0.01" value={voucherAmount} onChange={(event) => setVoucherAmount(event.target.value)} placeholder="0.00" /></label><button type="button" className="primary" disabled={busy || moneyInputCents(voucherAmount) < 100 || moneyInputCents(voucherAmount) > (voucherDashboard?.fund.balanceCents || 0)} onClick={() => submitVoucherOperation("allocate")}>Transferir a su tarjeta de vales</button></section> : null}
       </> : null}
       {drawer === "reader" ? <><span className="retail-kicker">HARDWARE Y CONTROL DE CALIDAD</span><h2>Prueba del lector</h2><NfcReaderDiagnostics lookupEndpoint="/api/retail-pos/nekudot" locationLabel="Tienda" /></> : null}
       {drawer === "printer" ? <PrinterDiagnostics /> : null}

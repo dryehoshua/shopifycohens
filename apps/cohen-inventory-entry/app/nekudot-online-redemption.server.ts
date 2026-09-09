@@ -6,6 +6,7 @@ import {
   NekudotError,
   reserveNekudotForMember,
 } from "./nekudot.server";
+import { cancelCommunityVoucherReservation, reserveCommunityVoucher } from "./community-wallet.server";
 
 const DEFAULT_STOREFRONT_URL = "https://cohenskosher.com";
 const ONLINE_REDEMPTION_MIN_CENTS = 100;
@@ -185,6 +186,88 @@ export async function createOnlineNekudotRedemption(input: {
     };
   } catch (error) {
     await cancelNekudotReservation(input.shop, reservation.id).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function cancelPreviousOnlineVoucherRedemptions(admin: AdminApiContext, shop: string, walletId: string) {
+  const previous = await db.communityVoucherRedemption.findMany({
+    where: { shop, walletId, status: "RESERVED", discountCode: { not: null }, shopifyDiscountId: { not: null } },
+    orderBy: { createdAt: "asc" },
+  });
+  for (const redemption of previous) {
+    await deleteDiscount(admin, redemption.shopifyDiscountId!);
+    await cancelCommunityVoucherReservation(shop, redemption.id);
+  }
+}
+
+export async function cancelOnlineCommunityVoucherRedemption(input: {
+  admin: AdminApiContext;
+  shop: string;
+  memberId: string;
+  redemptionId: string;
+}) {
+  const wallet = await db.communityVoucherWallet.findUnique({ where: { memberId: input.memberId } });
+  if (!wallet) return null;
+  const redemption = await db.communityVoucherRedemption.findFirst({
+    where: { id: input.redemptionId, walletId: wallet.id, shop: input.shop, status: "RESERVED" },
+  });
+  if (!redemption) return null;
+  if (redemption.shopifyDiscountId) await deleteDiscount(input.admin, redemption.shopifyDiscountId);
+  return cancelCommunityVoucherReservation(input.shop, redemption.id);
+}
+
+export async function createOnlineCommunityVoucherRedemption(input: {
+  admin: AdminApiContext;
+  shop: string;
+  customerId: string;
+  memberId: string;
+  amount: unknown;
+  cartReference?: string | null;
+}) {
+  const wallet = await db.communityVoucherWallet.findUnique({
+    where: { memberId: input.memberId },
+    include: { member: { select: { displayName: true } } },
+  });
+  if (!wallet || wallet.status !== "ACTIVE") throw new NekudotError("Tu tarjeta de Vales comunitarios no está activa.", 404);
+  await cancelPreviousOnlineVoucherRedemptions(input.admin, input.shop, wallet.id);
+  const code = `VALES-${randomBytes(8).toString("hex").toUpperCase()}`;
+  const reservation = await reserveCommunityVoucher({
+    shop: input.shop,
+    memberId: input.memberId,
+    amount: input.amount,
+    cartReference: input.cartReference || `online:${code}`,
+    idempotencyKey: `online-voucher:${input.memberId}:${randomUUID()}`,
+  });
+  try {
+    const response = await input.admin.graphql(`#graphql
+      mutation CreateCommunityVoucherDiscount($discount: DiscountCodeBasicInput!) {
+        discountCodeBasicCreate(basicCodeDiscount: $discount) {
+          codeDiscountNode { id }
+          userErrors { field message }
+        }
+      }
+    `, { variables: { discount: {
+      title: `Vales comunitarios · ${wallet.member.displayName} · ${reservation.id.slice(-6)}`,
+      code,
+      startsAt: new Date(Date.now() - 60_000).toISOString(),
+      endsAt: reservation.expiresAt.toISOString(),
+      context: { customers: { add: [input.customerId] } },
+      customerGets: { value: { discountAmount: { amount: (reservation.amountCents / 100).toFixed(2), appliesOnEachItem: false } }, items: { all: true } },
+      appliesOncePerCustomer: true,
+      usageLimit: 1,
+      combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: false },
+    } } });
+    const payload = await response.json() as DiscountMutationPayload;
+    const error = mutationError(payload, "discountCodeBasicCreate");
+    const shopifyDiscountId = payload.data?.discountCodeBasicCreate?.codeDiscountNode?.id;
+    if (error || !shopifyDiscountId) throw new NekudotError(`Shopify no pudo crear el descuento de vales${error ? `: ${error}` : "."}`, 502);
+    return db.communityVoucherRedemption.update({
+      where: { id: reservation.id },
+      data: { discountCode: code, shopifyDiscountId },
+    });
+  } catch (error) {
+    await cancelCommunityVoucherReservation(input.shop, reservation.id).catch(() => undefined);
     throw error;
   }
 }

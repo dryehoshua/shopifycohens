@@ -6,6 +6,7 @@ import bwipjs from "bwip-js";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
 import { NEKUDOT_PROGRAM_KEY, normalizeBrokerCode, normalizeNekudotCommunity, type NekudotCardTier } from "./nekudot-domain";
+import { normalizeCafeCustomerProfile } from "./cafe-customer-profile-domain";
 import { claimPendingNekudotOrders } from "./nekudot.server";
 import { unauthenticated } from "./shopify.server";
 
@@ -480,6 +481,24 @@ async function savePhoto(memberId: string, value: FormDataEntryValue | null) {
   return fileName;
 }
 
+export async function updateMemberPhoto(memberId: string, input: { name?: unknown; type?: unknown; data?: unknown }) {
+  const encoded = String(input.data || "");
+  if (!encoded || encoded.length > 6 * 1024 * 1024) throw new RegistrationError("La foto debe pesar menos de 4 MB.");
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(encoded, "base64");
+  } catch {
+    throw new RegistrationError("No pudimos leer la foto.");
+  }
+  const file = new File([new Uint8Array(bytes)], String(input.name || "perfil.jpg").slice(0, 120), {
+    type: String(input.type || "application/octet-stream").slice(0, 100),
+  });
+  const fileName = await savePhoto(memberId, file);
+  if (!fileName) throw new RegistrationError("Selecciona una foto.");
+  await db.nekudotMember.update({ where: { id: memberId }, data: { photoFileName: fileName } });
+  return fileName;
+}
+
 async function findCustomer(admin: AdminApiContext, email: string | null, phone: string) {
   const queries = [
     `phone:${JSON.stringify(phone)}`,
@@ -743,6 +762,13 @@ export async function registerNekudot(formData: FormData, kindValue: unknown, ve
   const photoFileName = await savePhoto(member.id, formData.get("photo"));
   if (photoFileName) await db.nekudotMember.update({ where: { id: member.id }, data: { photoFileName } });
   await ensureBarcodeCredential(member.id);
+  if (kind === "vales") {
+    await db.communityVoucherWallet.upsert({
+      where: { memberId: member.id },
+      create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: member.id, status: "ACTIVE" },
+      update: { status: "ACTIVE" },
+    });
+  }
   const checkoutUrl = kind === "golden" ? await createGoldenPayment(member.id, displayName, email!) : null;
   return {
     memberId: member.id,
@@ -757,6 +783,141 @@ export async function registerNekudot(formData: FormData, kindValue: unknown, ve
     credentialLastFour: rawQr.slice(-4),
     cardNumber: publicCardNumber(member.id),
   };
+}
+
+export async function onboardCustomerAccount(
+  shop: string,
+  customerId: string,
+  raw: Record<string, unknown>,
+) {
+  let profile;
+  try {
+    profile = normalizeCafeCustomerProfile({
+      ...raw,
+      customerId,
+      cardTier: "SILVER",
+      countryCode: "MX",
+    });
+  } catch (error) {
+    throw new RegistrationError(error instanceof Error ? error.message : "Completa correctamente tu perfil.");
+  }
+  if (!profile.lastName) throw new RegistrationError("Escribe tus apellidos.");
+  if (!profile.community) throw new RegistrationError("Selecciona tu comunidad.");
+  if (!profile.address?.address1 || !profile.address.city || !profile.address.province || !profile.address.zip) {
+    throw new RegistrationError("Completa calle y número, ciudad, estado y código postal para que tu cuenta quede lista para entregas.");
+  }
+
+  const { admin } = await unauthenticated.admin(shop);
+  const customer = await customerById(admin, customerId);
+  const email = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || profile.email;
+  const profileValue = JSON.stringify({
+    version: 1,
+    community: profile.community,
+    cardTier: "SILVER",
+    blueAffiliationCode: null,
+    deliveryInstructions: profile.deliveryInstructions,
+    updatedAt: new Date().toISOString(),
+    updatedBy: "CUSTOMER_ACCOUNT",
+  });
+  const updated = await graphql<{
+    customerUpdate: { customer: ShopifyCustomer | null; userErrors: Array<{ message: string }> };
+  }>(admin, `#graphql
+    mutation CustomerAccountOnboarding($input: CustomerInput!) {
+      customerUpdate(input: $input) {
+        customer { id legacyResourceId displayName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } }
+        userErrors { message }
+      }
+    }
+  `, { input: {
+    id: customerId,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    phone: profile.phone,
+    metafields: [{ namespace: "cohens", key: "pos_profile", type: "json", value: profileValue }],
+  } });
+  if (updated.customerUpdate.userErrors.length || !updated.customerUpdate.customer) {
+    throw new RegistrationError(updated.customerUpdate.userErrors.map((error) => error.message).join("; ") || "Shopify no pudo actualizar tu perfil.", 409);
+  }
+
+  const address = await graphql<{
+    customerAddressCreate: { address: { id: string } | null; userErrors: Array<{ message: string }> };
+  }>(admin, `#graphql
+    mutation CustomerAccountAddress($customerId: ID!, $address: MailingAddressInput!) {
+      customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: true) {
+        address { id }
+        userErrors { message }
+      }
+    }
+  `, { customerId, address: {
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    address1: profile.address.address1,
+    address2: profile.address.address2,
+    city: profile.address.city,
+    provinceCode: profile.address.province,
+    zip: profile.address.zip,
+    countryCode: "MX",
+    phone: profile.phone,
+  } });
+  if (address.customerAddressCreate.userErrors.length || !address.customerAddressCreate.address) {
+    throw new RegistrationError(address.customerAddressCreate.userErrors.map((error) => error.message).join("; ") || "Shopify no pudo guardar tu domicilio.", 409);
+  }
+  await setCustomerTags(admin, customerId, "NEKUDOT_PLATA");
+
+  const displayName = `${profile.firstName} ${profile.lastName}`.trim();
+  const memberId = await db.$transaction(async (transaction) => {
+    const currentIdentity = await transaction.nekudotCustomerIdentity.findUnique({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
+    });
+    if (currentIdentity) return currentIdentity.memberId;
+    const matches = await transaction.nekudotMember.findMany({
+      where: {
+        programKey: NEKUDOT_PROGRAM_KEY,
+        active: true,
+        OR: [{ phone: profile.phone }, ...(email ? [{ email }] : [])],
+      },
+      include: { identities: true },
+      take: 3,
+    });
+    const eligible = matches.filter((match) => !match.identities.some((identity) => identity.shop === shop && identity.shopifyCustomerId !== customerId));
+    if (eligible.length > 1) throw new RegistrationError("Encontramos más de una tarjeta con tus datos. Solicita ayuda en tienda para elegirla sin perder saldo.", 409);
+    const member = eligible[0]
+      ? await transaction.nekudotMember.update({
+          where: { id: eligible[0].id },
+          data: { displayName, email, phone: profile.phone, community: profile.community },
+        })
+      : await transaction.nekudotMember.create({
+          data: {
+            programKey: NEKUDOT_PROGRAM_KEY,
+            displayName,
+            email,
+            phone: profile.phone,
+            community: profile.community,
+            cardTier: "SILVER",
+            enrollmentStatus: "ACTIVE",
+            active: true,
+          },
+        });
+    await transaction.nekudotCustomerIdentity.create({ data: {
+      programKey: NEKUDOT_PROGRAM_KEY,
+      memberId: member.id,
+      shop,
+      shopifyCustomerId: customerId,
+      shopifyLegacyCustomerId: String(updated.customerUpdate.customer!.legacyResourceId),
+      displayName,
+      email,
+    } });
+    const rawQr = qrCredential(member.id);
+    await transaction.nekudotCredential.upsert({
+      where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: credentialHash(rawQr) } },
+      create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: member.id, tokenHash: credentialHash(rawQr), lastFour: rawQr.slice(-4), kind: "QR", label: "QR digital" },
+      update: { memberId: member.id, active: true, revokedAt: null, revokedReason: null, label: "QR digital" },
+    });
+    return member.id;
+  });
+  await ensureBarcodeCredential(memberId);
+  await claimExistingMemberBroker(memberId, { email, phone: profile.phone });
+  return { memberId, displayName };
 }
 
 export async function sendRegistrationRecoveryOtp(recoveryIdValue: unknown) {

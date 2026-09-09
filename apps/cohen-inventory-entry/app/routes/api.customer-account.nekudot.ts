@@ -9,11 +9,21 @@ import {
   transferIbGoldToNekudot,
 } from "../community-wallet.server";
 import {
+  cancelOnlineCommunityVoucherRedemption,
   cancelOnlineNekudotRedemption,
+  createOnlineCommunityVoucherRedemption,
   createOnlineNekudotRedemption,
 } from "../nekudot-online-redemption.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
-import { activateMemberBroker, brokerDashboard, claimExistingMemberBroker, memberCardData, RegistrationError } from "../nekudot-registration.server";
+import {
+  activateMemberBroker,
+  brokerDashboard,
+  claimExistingMemberBroker,
+  memberCardData,
+  onboardCustomerAccount,
+  RegistrationError,
+  updateMemberPhoto,
+} from "../nekudot-registration.server";
 import { unauthenticated } from "../shopify.server";
 
 type SessionClaims = {
@@ -46,6 +56,12 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   try {
     const { shop, customerId } = verifiedCustomerAccountSession(request);
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const intent = String(body?.intent || "");
+    if (intent === "complete_profile") {
+      const result = await onboardCustomerAccount(shop, customerId, body || {});
+      return Response.json({ ok: true, ...result }, { headers: corsHeaders });
+    }
     const identity = await db.nekudotCustomerIdentity.findUnique({
       where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
       select: { memberId: true, member: { select: { active: true } } },
@@ -53,8 +69,14 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!identity?.member.active) {
       return Response.json({ message: "Activa tu tarjeta Nekudot antes de usar puntos." }, { status: 404, headers: corsHeaders });
     }
-    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-    const intent = String(body?.intent || "");
+    if (intent === "update_photo") {
+      await updateMemberPhoto(identity.memberId, {
+        name: body?.photoName,
+        type: body?.photoType,
+        data: body?.photoData,
+      });
+      return Response.json({ ok: true }, { headers: corsHeaders });
+    }
     if (intent === "activate_community_voucher") {
       return Response.json({ ok: true, communityVoucher: await activateCommunityVoucher(identity.memberId) }, { headers: corsHeaders });
     }
@@ -71,6 +93,10 @@ export async function action({ request }: ActionFunctionArgs) {
       return Response.json({ ok: true, withdrawal: { id: withdrawal.id, amountCents: withdrawal.amountCents, status: withdrawal.status, requestedAt: withdrawal.requestedAt } }, { headers: corsHeaders });
     }
     const { admin } = await unauthenticated.admin(shop);
+    if (intent === "cancel_voucher") {
+      await cancelOnlineCommunityVoucherRedemption({ admin, shop, memberId: identity.memberId, redemptionId: String(body?.redemptionId || "") });
+      return Response.json({ ok: true }, { headers: corsHeaders });
+    }
     if (intent === "cancel") {
       await cancelOnlineNekudotRedemption({
         admin,
@@ -79,6 +105,22 @@ export async function action({ request }: ActionFunctionArgs) {
         redemptionId: String(body?.redemptionId || ""),
       });
       return Response.json({ ok: true }, { headers: corsHeaders });
+    }
+    if (intent === "redeem_voucher") {
+      const subtotalCents = Number(body?.subtotalCents);
+      if (!Number.isInteger(subtotalCents) || subtotalCents < 100) {
+        return Response.json({ message: "El carrito no tiene productos suficientes para usar vales." }, { status: 400, headers: corsHeaders });
+      }
+      const amount = String(body?.amount || "").trim().replace(",", ".");
+      const amountCents = /^\d+(?:\.\d{1,2})?$/.test(amount) ? Math.round(Number(amount) * 100) : 0;
+      if (amountCents > subtotalCents) {
+        return Response.json({ message: "Los vales sólo pueden descontar productos; cualquier envío se paga aparte." }, { status: 400, headers: corsHeaders });
+      }
+      const redemption = await createOnlineCommunityVoucherRedemption({
+        admin, shop, customerId, memberId: identity.memberId, amount,
+        cartReference: String(body?.checkoutToken || "customer-account-checkout"),
+      });
+      return Response.json({ ok: true, code: redemption.discountCode, redemptionId: redemption.id, amountCents: redemption.amountCents }, { headers: corsHeaders });
     }
     if (intent !== "redeem") {
       return Response.json({ message: "Solicitud de canje no válida." }, { status: 400, headers: corsHeaders });
@@ -158,15 +200,36 @@ async function customerContact(shop: string, customerId: string) {
   const response = await admin.graphql(`#graphql
     query NekudotAccountCustomer($id: ID!) {
       customer(id: $id) {
+        firstName
+        lastName
+        displayName
         defaultEmailAddress { emailAddress }
         defaultPhoneNumber { phoneNumber }
+        defaultAddress { address1 address2 city provinceCode zip countryCodeV2 }
       }
     }
   `, { variables: { id: customerId } });
-  const payload = await response.json() as { data?: { customer?: { defaultEmailAddress?: { emailAddress?: string }; defaultPhoneNumber?: { phoneNumber?: string } } } };
+  const payload = await response.json() as { data?: { customer?: {
+    firstName?: string;
+    lastName?: string;
+    displayName?: string;
+    defaultEmailAddress?: { emailAddress?: string };
+    defaultPhoneNumber?: { phoneNumber?: string };
+    defaultAddress?: { address1?: string; address2?: string; city?: string; provinceCode?: string; zip?: string; countryCodeV2?: string };
+  } } };
+  const customer = payload.data?.customer;
   return {
-    email: payload.data?.customer?.defaultEmailAddress?.emailAddress ?? null,
-    phone: payload.data?.customer?.defaultPhoneNumber?.phoneNumber ?? null,
+    firstName: customer?.firstName ?? "",
+    lastName: customer?.lastName ?? "",
+    displayName: customer?.displayName ?? "",
+    email: customer?.defaultEmailAddress?.emailAddress ?? null,
+    phone: customer?.defaultPhoneNumber?.phoneNumber ?? null,
+    address1: customer?.defaultAddress?.address1 ?? "",
+    address2: customer?.defaultAddress?.address2 ?? "",
+    city: customer?.defaultAddress?.city ?? "",
+    province: customer?.defaultAddress?.provinceCode ?? "",
+    zip: customer?.defaultAddress?.zip ?? "",
+    countryCode: customer?.defaultAddress?.countryCodeV2 ?? "MX",
   };
 }
 
@@ -189,10 +252,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
   const storefrontUrl = (process.env.SHOP_STOREFRONT_URL || "https://cohenskosher.com").replace(/\/$/, "");
   if (!identity?.member.active) {
+    const contact = await customerContact(shop, customerId);
     return Response.json({
       registered: false,
       registrationUrl: `${storefrontUrl}/apps/nekudot`,
-      message: "Activa tu tarjeta Nekudot para recibir cashback en tus compras.",
+      message: "Completa tu perfil Cohen's para recibir cashback y dejar tu cuenta lista para entregas.",
+      profile: contact,
     }, { headers: corsHeaders });
   }
   const contact = await customerContact(shop, customerId);

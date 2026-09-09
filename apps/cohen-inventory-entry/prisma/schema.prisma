@@ -536,45 +536,47 @@ model RetailRegisterShift {
 /// Venta retail local e idempotente. Shopify conserva el pedido oficial y el
 /// inventario; este registro protege contra cobros o pedidos duplicados.
 model RetailSale {
-  id                   String              @id @default(cuid())
-  shop                 String
-  idempotencyKey       String
-  status               String              @default("PENDING")
-  staffId              String
-  staff                RetailStaff         @relation(fields: [staffId], references: [id], onDelete: Restrict)
-  shiftId              String
-  shift                RetailRegisterShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
-  paymentMethod        String
-  externalReference    String?
-  grossCents           Int
-  discountCents        Int                 @default(0)
-  subtotalCents        Int
-  taxCents             Int                 @default(0)
-  totalCents           Int
-  cashPaidCents        Int                 @default(0)
-  terminalPaidCents    Int                 @default(0)
-  cashReceivedCents    Int?
-  changeCents          Int                 @default(0)
-  currencyCode         String              @default("MXN")
-  items                Json
-  customerId           String?
-  customerName         String?
-  customerEmail        String?
-  shopifyOrderId       String?
-  shopifyOrderName     String?
-  errorMessage         String?
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-  syncedAt             DateTime?
-  lastPrintedAt        DateTime?
-  printCount           Int                 @default(0)
-  refundedAt           DateTime?
-  refundedByName       String?
-  shopifyRefundId      String?
-  refundIdempotencyKey String?             @unique
-  nekudotMemberId      String?
-  nekudotRedemptionId  String?
-  nekudotRedeemedCents Int                 @default(0)
+  id                            String              @id @default(cuid())
+  shop                          String
+  idempotencyKey                String
+  status                        String              @default("PENDING")
+  staffId                       String
+  staff                         RetailStaff         @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  shiftId                       String
+  shift                         RetailRegisterShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  paymentMethod                 String
+  externalReference             String?
+  grossCents                    Int
+  discountCents                 Int                 @default(0)
+  subtotalCents                 Int
+  taxCents                      Int                 @default(0)
+  totalCents                    Int
+  cashPaidCents                 Int                 @default(0)
+  terminalPaidCents             Int                 @default(0)
+  cashReceivedCents             Int?
+  changeCents                   Int                 @default(0)
+  currencyCode                  String              @default("MXN")
+  items                         Json
+  customerId                    String?
+  customerName                  String?
+  customerEmail                 String?
+  shopifyOrderId                String?
+  shopifyOrderName              String?
+  errorMessage                  String?
+  createdAt                     DateTime            @default(now())
+  updatedAt                     DateTime            @updatedAt
+  syncedAt                      DateTime?
+  lastPrintedAt                 DateTime?
+  printCount                    Int                 @default(0)
+  refundedAt                    DateTime?
+  refundedByName                String?
+  shopifyRefundId               String?
+  refundIdempotencyKey          String?             @unique
+  nekudotMemberId               String?
+  nekudotRedemptionId           String?
+  nekudotRedeemedCents          Int                 @default(0)
+  communityVoucherRedemptionId  String?
+  communityVoucherRedeemedCents Int                 @default(0)
 
   @@unique([shop, idempotencyKey])
   @@index([shop, createdAt])
@@ -584,6 +586,7 @@ model RetailSale {
   @@index([customerId])
   @@index([nekudotMemberId])
   @@index([nekudotRedemptionId])
+  @@index([communityVoucherRedemptionId])
 }
 
 /// Miembro único del programa Nekudot Cohen's. Su wallet se comparte entre
@@ -618,7 +621,7 @@ model NekudotMember {
   membershipPayments NekudotMembershipPayment[]
   ownedBroker        NekudotBroker?             @relation("NekudotBrokerOwner")
   claimedOrders      NekudotPendingClaim[]      @relation("NekudotClaimedMember")
-  communityVoucher  CommunityVoucherWallet?
+  communityVoucher   CommunityVoucherWallet?
 
   @@index([programKey, active, updatedAt])
   @@index([brokerId, active])
@@ -684,10 +687,10 @@ model NekudotBroker {
   createdAt               DateTime       @default(now())
   updatedAt               DateTime       @updatedAt
 
-  clients        NekudotMember[]
-  ledger         NekudotLedgerEntry[]
-  accruals       NekudotOrderAccrual[]
-  portalSessions NekudotBrokerSession[]
+  clients            NekudotMember[]
+  ledger             NekudotLedgerEntry[]
+  accruals           NekudotOrderAccrual[]
+  portalSessions     NekudotBrokerSession[]
   withdrawalRequests NekudotBrokerWithdrawal[]
 
   @@unique([programKey, code])
@@ -698,27 +701,85 @@ model NekudotBroker {
 /// Segundo monedero del cliente, reservado exclusivamente para apoyo comunitario.
 /// No genera cashback, no se puede retirar y nunca se mezcla con Nekudot personales.
 model CommunityVoucherWallet {
-  id                    String         @id @default(cuid())
-  programKey            String         @default("cohens")
-  memberId              String         @unique
-  member                NekudotMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  status                String         @default("ACTIVE")
-  balanceCents          Int            @default(0)
-  reservedCents         Int            @default(0)
-  lifetimeGrantedCents  Int            @default(0)
-  lifetimeRedeemedCents Int            @default(0)
-  activatedAt           DateTime       @default(now())
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
+  id                    String                        @id @default(cuid())
+  programKey            String                        @default("cohens")
+  memberId              String                        @unique
+  member                NekudotMember                 @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  status                String                        @default("ACTIVE")
+  balanceCents          Int                           @default(0)
+  reservedCents         Int                           @default(0)
+  lifetimeGrantedCents  Int                           @default(0)
+  lifetimeRedeemedCents Int                           @default(0)
+  activatedAt           DateTime                      @default(now())
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
   ledger                CommunityVoucherLedgerEntry[]
+  redemptions           CommunityVoucherRedemption[]
 
   @@index([programKey, status, updatedAt])
 }
 
+/// Cuenta concentradora de aportaciones comunitarias. Sólo administración
+/// puede cargarla y distribuir saldo a las tarjetas de vales.
+model CommunityVoucherFund {
+  id                   String                      @id @default(cuid())
+  programKey           String                      @unique @default("cohens")
+  balanceCents         Int                         @default(0)
+  lifetimeLoadedCents  Int                         @default(0)
+  lifetimeGrantedCents Int                         @default(0)
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  ledger               CommunityVoucherFundEntry[]
+}
+
+model CommunityVoucherFundEntry {
+  id                String               @id @default(cuid())
+  programKey        String               @default("cohens")
+  fundId            String
+  fund              CommunityVoucherFund @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  type              String
+  amountCents       Int
+  balanceAfterCents Int
+  source            String
+  sourceId          String?
+  idempotencyKey    String
+  description       String
+  occurredAt        DateTime             @default(now())
+
+  @@unique([programKey, idempotencyKey])
+  @@index([fundId, occurredAt])
+}
+
+model CommunityVoucherRedemption {
+  id                String                 @id @default(cuid())
+  programKey        String                 @default("cohens")
+  walletId          String
+  wallet            CommunityVoucherWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  shop              String
+  status            String                 @default("RESERVED")
+  amountCents       Int
+  restoredCents     Int                    @default(0)
+  cartReference     String
+  idempotencyKey    String
+  discountCode      String?                @unique
+  shopifyDiscountId String?
+  shopifyOrderId    String?
+  expiresAt         DateTime
+  appliedAt         DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@unique([programKey, idempotencyKey])
+  @@index([shop, status, expiresAt])
+  @@index([walletId, status, createdAt])
+  @@index([shopifyOrderId])
+}
+
 /// Movimientos auditables de vales: aportación, asignación, consumo y reversión.
 model CommunityVoucherLedgerEntry {
-  id                String                  @id @default(cuid())
-  programKey        String                  @default("cohens")
+  id                String                 @id @default(cuid())
+  programKey        String                 @default("cohens")
   walletId          String
   wallet            CommunityVoucherWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
   type              String
@@ -729,8 +790,8 @@ model CommunityVoucherLedgerEntry {
   idempotencyKey    String
   description       String
   metadata          Json?
-  occurredAt        DateTime                @default(now())
-  createdAt         DateTime                @default(now())
+  occurredAt        DateTime               @default(now())
+  createdAt         DateTime               @default(now())
 
   @@unique([programKey, idempotencyKey])
   @@index([walletId, occurredAt])
@@ -740,18 +801,18 @@ model CommunityVoucherLedgerEntry {
 /// Solicitud del IB para cobrar en efectivo sus Nekudot Gold. El saldo queda
 /// reservado hasta que administración lo pague o rechace.
 model NekudotBrokerWithdrawal {
-  id           String        @id @default(cuid())
-  programKey   String        @default("cohens")
-  brokerId     String
-  broker       NekudotBroker @relation(fields: [brokerId], references: [id], onDelete: Cascade)
-  amountCents  Int
-  status       String        @default("REQUESTED")
-  requestedAt  DateTime      @default(now())
-  processedAt  DateTime?
-  processedBy  String?
-  notes        String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id          String        @id @default(cuid())
+  programKey  String        @default("cohens")
+  brokerId    String
+  broker      NekudotBroker @relation(fields: [brokerId], references: [id], onDelete: Cascade)
+  amountCents Int
+  status      String        @default("REQUESTED")
+  requestedAt DateTime      @default(now())
+  processedAt DateTime?
+  processedBy String?
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@index([brokerId, status, requestedAt])
   @@index([programKey, status, requestedAt])

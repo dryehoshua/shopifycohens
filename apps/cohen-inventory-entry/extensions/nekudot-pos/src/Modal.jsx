@@ -40,6 +40,7 @@ function NekudotModal() {
   const [credential, setCredential] = useState("");
   const [member, setMember] = useState(null);
   const [amount, setAmount] = useState("");
+  const [paymentWallet, setPaymentWallet] = useState("nekudot");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const lookupRef = useRef(null);
@@ -59,6 +60,7 @@ function NekudotModal() {
       await shopify.cart.setCustomer({ id: Number(payload.member.currentShopIdentity.legacyCustomerId) });
       await shopify.cart.addCartProperties({ nekudot_member_id: payload.member.id });
       setMember(payload.member);
+      setPaymentWallet(payload.member.availableCents > 0 ? "nekudot" : payload.member.communityVoucher?.availableCents > 0 ? "voucher" : "nekudot");
       shopify.toast.show(`${payload.member.displayName} identificado`);
     } catch (error) {
       setMessage(error.message);
@@ -78,11 +80,13 @@ function NekudotModal() {
     const subtotalCents = cartSubtotalCents();
     if (!Number.isInteger(amountCents) || amountCents <= 0) return setMessage("Escribe un importe válido.");
     if (amountCents > subtotalCents) return setMessage("El canje no puede superar el subtotal del carrito.");
+    const walletAvailable = paymentWallet === "voucher" ? member.communityVoucher?.availableCents || 0 : member.availableCents;
+    if (amountCents > walletAvailable) return setMessage(`El saldo de ${paymentWallet === "voucher" ? "vales" : "Nekudot"} no alcanza.`);
     setBusy(true); setMessage("");
     let reservation;
     try {
       const payload = await backend("/api/pos/nekudot", { method: "POST", body: JSON.stringify({
-        intent: "reserve", credential, amount, cartTotalCents: subtotalCents,
+        intent: paymentWallet === "voucher" ? "reserve_voucher" : "reserve", credential, amount, cartTotalCents: subtotalCents,
         cartReference: shopify.cart.current.value.id ?? shopify.session.currentSession.deviceId,
         idempotencyKey: operationKey(),
       }) });
@@ -90,13 +94,13 @@ function NekudotModal() {
       await shopify.cart.applyCartDiscount("FixedAmount", "Nekudot Cohen's", (reservation.amountCents / 100).toFixed(2));
       await shopify.cart.addCartProperties({
         nekudot_member_id: member.id,
-        nekudot_redemption_id: reservation.id,
+        ...(paymentWallet === "voucher" ? { community_voucher_redemption_id: reservation.id } : { nekudot_redemption_id: reservation.id }),
       });
-      shopify.toast.show(`${money(reservation.amountCents)} en Nekudot aplicados`);
+      shopify.toast.show(`${money(reservation.amountCents)} en ${paymentWallet === "voucher" ? "Vales" : "Nekudot"} aplicados`);
       shopify.action.dismissModal();
     } catch (error) {
       if (reservation?.id) {
-        await backend("/api/pos/nekudot", { method: "POST", body: JSON.stringify({ intent: "cancel", reservationId: reservation.id }) }).catch(() => {});
+        await backend("/api/pos/nekudot", { method: "POST", body: JSON.stringify({ intent: paymentWallet === "voucher" ? "cancel_voucher" : "cancel", reservationId: reservation.id }) }).catch(() => {});
       }
       setMessage(error.message);
     } finally { setBusy(false); }
@@ -106,7 +110,7 @@ function NekudotModal() {
     <s-banner tone="info" heading="Silver 2% · Blue 5% · Golden 8%">La misma tarjeta funciona en tienda y cafetería. El broker conserva una comisión de 5% y el saldo se confirma al completar la compra.</s-banner>
     {message ? <s-banner tone="critical" heading="No se pudo continuar">{message}</s-banner> : null}
     {!member ? <s-section heading="Identificar miembro"><s-stack direction="block" gap="base"><s-text-field label="ID RFID o QR" value={credential} onInput={(event) => setCredential(event.currentTarget.value)} placeholder="Escanea o escribe" /><s-stack direction="inline" gap="base"><s-button variant="primary" disabled={busy} onClick={() => lookup(credential)}>{busy ? "Buscando…" : "Buscar"}</s-button><s-button variant="secondary" onClick={() => shopify.scanner.showCameraScanner()}>Usar cámara</s-button></s-stack></s-stack></s-section> : <>
-      <s-section heading={member.displayName}><s-stack direction="block" gap="base"><s-banner tone="success" heading={`${cardTierLabel(member.cardTier)} · ${member.cashbackBasisPoints / 100}% · Disponible: ${money(member.availableCents)}`}>{member.broker ? `Broker: ${member.broker.displayName}` : "Sin broker asignado"}</s-banner><s-text-field label="Nekudot a usar (MXN)" value={amount} inputMode="decimal" onInput={(event) => setAmount(event.currentTarget.value)} placeholder="0.00" /><s-button variant="primary" disabled={busy || member.availableCents <= 0 || cartSubtotalCents() <= 0} onClick={redeem}>{busy ? "Aplicando…" : "Aplicar al carrito"}</s-button><s-button variant="secondary" onClick={() => { setMember(null); setCredential(""); setAmount(""); }}>Leer otra tarjeta</s-button></s-stack></s-section>
+      <s-section heading={member.displayName}><s-stack direction="block" gap="base"><s-banner tone="success" heading={`${cardTierLabel(member.cardTier)} · ${member.cashbackBasisPoints / 100}% · Nekudot: ${money(member.availableCents)}`}>{member.broker ? `Broker: ${member.broker.displayName}` : "Cuenta Cohen's identificada"}</s-banner>{member.communityVoucher ? <s-stack direction="inline" gap="base"><s-button variant={paymentWallet === "nekudot" ? "primary" : "secondary"} onClick={() => { setPaymentWallet("nekudot"); setAmount(""); }}>Nekudot · {money(member.availableCents)}</s-button><s-button variant={paymentWallet === "voucher" ? "primary" : "secondary"} onClick={() => { setPaymentWallet("voucher"); setAmount(""); }}>Vales · {money(member.communityVoucher.availableCents)}</s-button></s-stack> : null}<s-text-field label={`${paymentWallet === "voucher" ? "Vales" : "Nekudot"} a usar (MXN)`} value={amount} inputMode="decimal" onInput={(event) => setAmount(event.currentTarget.value)} placeholder="0.00" /><s-button variant="primary" disabled={busy || (paymentWallet === "voucher" ? (member.communityVoucher?.availableCents || 0) <= 0 : member.availableCents <= 0) || cartSubtotalCents() <= 0} onClick={redeem}>{busy ? "Aplicando…" : `Aplicar ${paymentWallet === "voucher" ? "Vales" : "Nekudot"} al carrito`}</s-button><s-button variant="secondary" onClick={() => { setMember(null); setCredential(""); setAmount(""); }}>Leer otra tarjeta</s-button></s-stack></s-section>
     </>}
   </s-stack></s-box></s-scroll-box></s-page>;
 }

@@ -10,6 +10,7 @@ import {
 import { syncSalesOrderFromAdmin } from "../sales-sync.server";
 import { authenticate, unauthenticated } from "../shopify.server";
 import { cashbackBasisPointsForTier } from "../nekudot-domain";
+import { cancelCommunityVoucherReservation, communityVoucherForMember, reserveCommunityVoucher } from "../community-wallet.server";
 
 function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) {
   return {
@@ -28,6 +29,14 @@ function memberPayload(member: Awaited<ReturnType<typeof lookupNekudotMember>>) 
           legacyCustomerId: member.currentShopIdentity.shopifyLegacyCustomerId,
         }
       : null,
+  };
+}
+
+async function memberWithVoucher(member: Awaited<ReturnType<typeof lookupNekudotMember>>) {
+  const voucher = await communityVoucherForMember(member.id);
+  return {
+    ...memberPayload(member),
+    communityVoucher: voucher ? { active: voucher.status === "ACTIVE", availableCents: voucher.availableCents, cardNumber: voucher.cardNumber } : null,
   };
 }
 
@@ -173,7 +182,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shop = shopDomainFromDestination(sessionToken.dest);
     const credential = new URL(request.url).searchParams.get("credential");
     const member = await lookupNekudotMember(shop, credential);
-    return cors(Response.json({ ok: true, member: memberPayload(member) }));
+    return cors(Response.json({ ok: true, member: await memberWithVoucher(member) }));
   } catch (error) {
     return cors(errorResponse(error));
   }
@@ -187,7 +196,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const intent = String(body.intent ?? "reserve");
     if (intent === "lookup") {
       const member = await lookupNekudotMember(shop, body.credential);
-      return cors(Response.json({ ok: true, member: memberPayload(member) }));
+      return cors(Response.json({ ok: true, member: await memberWithVoucher(member) }));
     }
     if (intent === "attach_order") {
       const result = await attachMemberToCompletedOrder({
@@ -200,6 +209,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "cancel") {
       const reservation = await cancelNekudotReservation(shop, String(body.reservationId ?? ""));
       return cors(Response.json({ ok: true, reservation }));
+    }
+    if (intent === "cancel_voucher") {
+      const reservation = await cancelCommunityVoucherReservation(shop, String(body.reservationId ?? ""));
+      return cors(Response.json({ ok: true, reservation }));
+    }
+    if (intent === "reserve_voucher") {
+      const member = await lookupNekudotMember(shop, body.credential);
+      const reservation = await reserveCommunityVoucher({
+        shop,
+        memberId: member.id,
+        amount: body.amount,
+        cartReference: body.cartReference,
+        idempotencyKey: body.idempotencyKey,
+      });
+      return cors(Response.json({ ok: true, reservation: { id: reservation.id, amountCents: reservation.amountCents, expiresAt: reservation.expiresAt.toISOString() } }));
     }
     if (intent !== "reserve") throw new NekudotError("Acción no válida.", 405);
     const reservation = await reserveNekudot({
