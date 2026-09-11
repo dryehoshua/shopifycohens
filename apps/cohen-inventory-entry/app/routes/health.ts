@@ -2,9 +2,33 @@ import db from "../db.server";
 
 export const loader = async () => {
   try {
-    await db.$queryRaw`SELECT 1`;
+    const [, latestOrderWatchdog] = await Promise.all([
+      db.$queryRaw`SELECT 1`,
+      db.salesSyncRun.findFirst({
+        where: { source: "ORDER_WATCHDOG" },
+        orderBy: { startedAt: "desc" },
+        select: {
+          status: true,
+          startedAt: true,
+          completedAt: true,
+          ordersSeen: true,
+          ordersImported: true,
+          errorMessage: true,
+        },
+      }),
+    ]);
     return Response.json(
-      { status: "ok" },
+      {
+        status: "ok",
+        orderSyncWatchdog: latestOrderWatchdog
+          ? {
+              ...latestOrderWatchdog,
+              startedAt: latestOrderWatchdog.startedAt.toISOString(),
+              completedAt:
+                latestOrderWatchdog.completedAt?.toISOString() ?? null,
+            }
+          : null,
+      },
       {
         headers: {
           "Cache-Control": "no-store",

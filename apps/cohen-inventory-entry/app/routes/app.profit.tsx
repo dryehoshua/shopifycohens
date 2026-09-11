@@ -1,7 +1,12 @@
-import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import type {
+  ActionFunctionArgs,
+  HeadersFunction,
+  LoaderFunctionArgs,
+} from "react-router";
+import { redirect, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
+import { syncRecentSalesOrdersFromAdmin } from "../sales-sync.server";
 import { authenticate } from "../shopify.server";
 
 const PERIODS = new Set(["today", "7d", "30d", "all"]);
@@ -80,6 +85,16 @@ function profitHref({
   params.set("dir", direction);
   return `${baseUrl}?${params.toString()}`;
 }
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  await syncRecentSalesOrdersFromAdmin({
+    admin,
+    sourceShop: session.shop.trim().toLowerCase(),
+  });
+  const url = new URL(request.url);
+  return redirect(`${url.pathname}${url.search}`);
+};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -422,6 +437,28 @@ function syncTone(status: string) {
   return "warning" as const;
 }
 
+function SyncNowButton() {
+  return (
+    <form method="post">
+      <button
+        type="submit"
+        style={{
+          minHeight: "38px",
+          padding: "8px 14px",
+          border: "1px solid #1f5132",
+          borderRadius: "8px",
+          background: "#1f5132",
+          color: "#fff",
+          fontWeight: 650,
+          cursor: "pointer",
+        }}
+      >
+        Actualizar pedidos ahora
+      </button>
+    </form>
+  );
+}
+
 const cellStyle = {
   padding: "11px 8px",
   borderBottom: "1px solid #ebebeb",
@@ -572,11 +609,14 @@ export default function ProfitAnalytics() {
 
       {!data.latestSync ? (
         <s-section heading="Sincronización de ventas">
-          <s-banner tone="warning" heading="La estructura está lista para importar">
-            Falta autorizar el acceso de solo lectura a pedidos, productos e
-            inventario de la tienda productiva. Después de autorizarlo, el
-            primer proceso traerá el historial disponible y sus reembolsos.
-          </s-banner>
+          <s-stack direction="block" gap="base">
+            <s-banner tone="warning" heading="La estructura está lista para importar">
+              Falta autorizar el acceso de solo lectura a pedidos, productos e
+              inventario de la tienda productiva. Después de autorizarlo, el
+              primer proceso traerá el historial disponible y sus reembolsos.
+            </s-banner>
+            <SyncNowButton />
+          </s-stack>
         </s-section>
       ) : (
         <s-section heading="Sincronización de ventas">
@@ -603,6 +643,12 @@ export default function ProfitAnalytics() {
               )}
               .
             </s-paragraph>
+            <s-paragraph>
+              Los webhooks registran cada cambio al momento y el watchdog
+              verifica pedidos de Shopify POS y de Cohens Operations cada
+              minuto.
+            </s-paragraph>
+            <SyncNowButton />
           </s-stack>
         </s-section>
       )}

@@ -1,6 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nekudotPurchaseCentsForSyncedOrder } from "./sales-sync-domain.ts";
+import {
+  nekudotPurchaseCentsForSyncedOrder,
+  orderWatchdogStart,
+  posSaleReferences,
+} from "./sales-sync-domain.ts";
+
+test("el watchdog solapa dos minutos desde la última corrida completa", () => {
+  assert.equal(
+    orderWatchdogStart({
+      now: new Date("2026-09-11T18:00:00.000Z"),
+      lastCompletedAt: new Date("2026-09-11T17:59:00.000Z"),
+    }).toISOString(),
+    "2026-09-11T17:57:00.000Z",
+  );
+});
+
+test("la primera corrida recupera siete días", () => {
+  assert.equal(
+    orderWatchdogStart({
+      now: new Date("2026-09-11T18:00:00.000Z"),
+    }).toISOString(),
+    "2026-09-04T18:00:00.000Z",
+  );
+});
+
+test("reconoce las ventas creadas por ambas POS", () => {
+  assert.deepEqual(
+    posSaleReferences([
+      { key: "retail_pos_sale_id", value: " retail-123 " },
+      { key: "cafe_pos_sale_id", value: "cafe-456" },
+    ]),
+    { retailSaleId: "retail-123", cafeSaleId: "cafe-456" },
+  );
+});
 
 test("conserva el total pagado con IVA para pedidos del POS de cafetería", () => {
   assert.equal(

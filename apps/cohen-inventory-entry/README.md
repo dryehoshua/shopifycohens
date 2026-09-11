@@ -84,6 +84,22 @@ El reembolso no se resta dos veces: Shopify entrega la venta de línea sin
 cantidades reembolsadas o retiradas y la app calcula el costo con la cantidad
 neta restante.
 
+Además de los webhooks, el servicio productivo inicia un watchdog que consulta
+los pedidos actualizados cada 60 segundos. Cada corrida vuelve a revisar los dos
+minutos anteriores, por lo que un webhook tardío, repetido o perdido termina en
+el mismo registro idempotente. La primera corrida recupera siete días. Los
+pedidos creados desde Shopify POS y desde las POS web de Cohen's quedan en el
+mismo libro; si Shopify creó una venta local pero la respuesta de red se perdió,
+los atributos del pedido permiten enlazarla con su folio local. El panel de
+analíticos incluye **Actualizar pedidos ahora** para ejecutar la misma
+conciliación bajo demanda. El estado más reciente también aparece en `/health`.
+
+Variables opcionales: `ORDER_SYNC_WATCHDOG_ENABLED`,
+`ORDER_SYNC_WATCHDOG_INTERVAL_MS`, `ORDER_SYNC_OVERLAP_MINUTES` y
+`ORDER_SYNC_INITIAL_LOOKBACK_MINUTES`. Railway limita sus cron jobs a una
+frecuencia mínima de cinco minutos; por eso este proceso vive dentro del
+servicio web persistente y no requiere un cron separado.
+
 Esta cifra es utilidad bruta estimada, no utilidad neta. El costo es el vigente
 al momento de sincronizar, porque Shopify no conserva un costo histórico
 completo para todas las ventas anteriores.
