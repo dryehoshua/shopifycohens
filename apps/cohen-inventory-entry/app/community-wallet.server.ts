@@ -9,6 +9,7 @@ function parseAmountCents(value: unknown) {
   const normalized = String(value ?? "").trim().replace(",", ".");
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) throw new NekudotError("Escribe una cantidad válida.");
   const cents = Math.round(Number(normalized) * 100);
+  if (!Number.isSafeInteger(cents) || cents > 100_000_000) throw new NekudotError("El importe excede el límite permitido.");
   if (cents < 100) throw new NekudotError("La cantidad mínima es $1.00 MXN.");
   return cents;
 }
@@ -102,7 +103,10 @@ export async function loadCommunityVoucherFund(input: {
     const duplicate = await transaction.communityVoucherFundEntry.findUnique({
       where: { programKey_idempotencyKey: { programKey: NEKUDOT_PROGRAM_KEY, idempotencyKey: key } },
     });
-    if (duplicate) return transaction.communityVoucherFund.findUniqueOrThrow({ where: { id: duplicate.fundId } });
+    if (duplicate) {
+      if (duplicate.type !== "LOAD" || duplicate.amountCents !== amountCents) throw new NekudotError("Esta referencia ya se usó para otra operación.", 409);
+      return transaction.communityVoucherFund.findUniqueOrThrow({ where: { id: duplicate.fundId } });
+    }
     const fund = await transaction.communityVoucherFund.upsert({
       where: { programKey: NEKUDOT_PROGRAM_KEY },
       create: { programKey: NEKUDOT_PROGRAM_KEY, balanceCents: amountCents, lifetimeLoadedCents: amountCents },
@@ -131,13 +135,17 @@ export async function allocateCommunityVoucher(input: {
 }) {
   const amountCents = parseAmountCents(input.amount);
   const key = safeOperationKey(input.idempotencyKey);
-  const wallet = await activateCommunityVoucher(input.memberId);
+  const wallet = await communityVoucherForMember(input.memberId);
   if (!wallet) throw new NekudotError("No pudimos activar la tarjeta de vales.", 500);
+  if (wallet.status !== "ACTIVE") throw new NekudotError("La tarjeta de vales no está activa.", 409);
   await db.$transaction(async (transaction) => {
     const duplicate = await transaction.communityVoucherFundEntry.findUnique({
       where: { programKey_idempotencyKey: { programKey: NEKUDOT_PROGRAM_KEY, idempotencyKey: key } },
     });
-    if (duplicate) return;
+    if (duplicate) {
+      if (duplicate.type !== "ALLOCATION" || duplicate.amountCents !== -amountCents || duplicate.sourceId !== wallet.id) throw new NekudotError("Esta referencia ya se usó para otra operación.", 409);
+      return;
+    }
     const fund = await transaction.communityVoucherFund.findUnique({ where: { programKey: NEKUDOT_PROGRAM_KEY } });
     if (!fund || fund.balanceCents < amountCents) throw new NekudotError("La cuenta concentradora no tiene saldo suficiente.", 409);
     const updatedFund = await transaction.communityVoucherFund.update({
@@ -176,7 +184,11 @@ export async function reserveCommunityVoucher(input: {
     const duplicate = await transaction.communityVoucherRedemption.findUnique({
       where: { programKey_idempotencyKey: { programKey: NEKUDOT_PROGRAM_KEY, idempotencyKey: key } },
     });
-    if (duplicate) return duplicate;
+    if (duplicate) {
+      const owner = await transaction.communityVoucherWallet.findUnique({ where: { memberId: input.memberId } });
+      if (duplicate.walletId !== owner?.id || duplicate.shop !== input.shop || duplicate.amountCents !== amountCents || duplicate.status !== "RESERVED") throw new NekudotError("Esta referencia de canje ya no es válida para esta compra.", 409);
+      return duplicate;
+    }
     const wallet = await transaction.communityVoucherWallet.findUnique({ where: { memberId: input.memberId } });
     if (!wallet || wallet.status !== "ACTIVE") throw new NekudotError("La tarjeta de vales no está activa.", 404);
     if (wallet.balanceCents - wallet.reservedCents < amountCents) throw new NekudotError("El saldo de Vales comunitarios no alcanza.", 409);

@@ -63,6 +63,10 @@ export async function action({ request }: ActionFunctionArgs) {
         idempotencyKey: key,
       });
     } else if (body.intent === "allocate") {
+      const recipient = await db.nekudotCustomerIdentity.findFirst({ where: {
+        shop: authorization.session.shop, memberId: String(body.memberId || ""), member: { active: true },
+      } });
+      if (!recipient) return Response.json({ ok: false, error: "Selecciona un cliente activo de esta tienda." }, { status: 404 });
       await allocateCommunityVoucher({
         memberId: String(body.memberId || ""),
         amount: body.amount,

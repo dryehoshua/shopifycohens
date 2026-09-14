@@ -412,6 +412,7 @@ export default function RetailPos() {
   const [voucherRecipient, setVoucherRecipient] = useState<VoucherRecipient | null>(null);
   const [voucherAmount, setVoucherAmount] = useState("");
   const [voucherSource, setVoucherSource] = useState("");
+  const voucherOperation = useRef<{ fingerprint: string; key: string } | null>(null);
   const printer = useRef<{ device: UsbDevice; endpoint: number } | null>(null);
   const saleKey = useRef(newSaleKey());
   const searchRef = useRef<HTMLInputElement>(null);
@@ -838,6 +839,7 @@ export default function RetailPos() {
         body: JSON.stringify({ intent: "lookup", credential: value }),
       });
       setMember(result.member); setNekudotAmount("0"); setUseMaximumNekudot(false);
+      setRedemptionWallet(value.startsWith("COHENS:VALES:") || result.member.cardTier === "VOUCHER" ? "voucher" : "nekudot");
       if (result.member.customer) setCustomer(result.member.customer);
       setMessage({ tone: "success", text: `${result.member.displayName} identificado. Tarjeta ${cardTierLabel(result.member.cardTier)} · ${result.member.cashbackBasisPoints / 100}% de cashback.` });
     } catch (error) {
@@ -1012,6 +1014,9 @@ export default function RetailPos() {
     if (amountCents < 100) return setMessage({ tone: "error", text: "Escribe una cantidad válida desde $1.00." });
     if (intent === "allocate" && !voucherRecipient) return setMessage({ tone: "error", text: "Selecciona a quién asignar el saldo." });
     const managerPin = initial.staff?.role === "MANAGER" ? undefined : window.prompt("Ingresa el PIN del gerente para mover saldo comunitario:") || "";
+    if (initial.staff?.role !== "MANAGER" && !managerPin) return;
+    const fingerprint = JSON.stringify([intent, amountCents, intent === "allocate" ? voucherRecipient?.memberId : voucherSource]);
+    if (voucherOperation.current?.fingerprint !== fingerprint) voucherOperation.current = { fingerprint, key: `voucher:${intent}:${newSaleKey()}` };
     setBusy(true);
     try {
       const result = await api<VoucherDashboard>("/api/retail-pos/vouchers", { method: "POST", body: JSON.stringify({
@@ -1020,10 +1025,11 @@ export default function RetailPos() {
         sourceReference: voucherSource,
         memberId: voucherRecipient?.memberId,
         managerPin,
-        idempotencyKey: `voucher:${intent}:${newSaleKey()}`,
+        idempotencyKey: voucherOperation.current.key,
       }) });
       setVoucherDashboard(result);
       setVoucherAmount("");
+      voucherOperation.current = null;
       if (intent === "load") setVoucherSource("");
       setMessage({ tone: "success", text: intent === "load" ? "Recarga agregada a la cuenta concentradora." : `Saldo asignado a ${voucherRecipient?.displayName}.` });
     } catch (error) {
@@ -1040,7 +1046,7 @@ export default function RetailPos() {
         <button className="retail-button dark" onClick={() => setDrawer("printer")}>Impresora <span>{printerName ? "USB" : ""}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("catalog")}>Catálogo</button>
         <button className="retail-button dark" onClick={() => setDrawer("customers")}>Clientes</button>
-        {initial.staff.role === "MANAGER" ? <button className="retail-button dark" onClick={() => setDrawer("vouchers")}>Vales</button> : null}
+        <button className="retail-button dark" onClick={() => setDrawer("vouchers")}>Vales</button>
         <button className="retail-button dark" onClick={() => setDrawer("reader")}>Lectores</button>
         <button className="retail-button dark" onClick={() => setDrawer("suspended")}>En espera <span className="retail-counter">{suspendedSales.length}</span></button>
         <button className="retail-button dark" onClick={() => setDrawer("orders")}>Pedidos</button>

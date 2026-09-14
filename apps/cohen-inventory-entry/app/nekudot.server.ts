@@ -292,6 +292,9 @@ export async function bindNekudotCredential(input: {
         revokedByShop: null,
       },
     });
+    if (cardTier === "VOUCHER") await transaction.communityVoucherWallet.upsert({
+      where: { memberId }, create: { programKey: NEKUDOT_PROGRAM_KEY, memberId, status: "ACTIVE" }, update: {},
+    });
     return transaction.nekudotMember.findUniqueOrThrow({
       where: { id: memberId },
       include: { broker: true, credentials: true, identities: true },
@@ -405,6 +408,9 @@ export async function replaceNekudotCredential(input: {
       where: { id: identity.memberId },
       data: { cardTier },
     });
+    if (cardTier === "VOUCHER") await transaction.communityVoucherWallet.upsert({
+      where: { memberId: identity.memberId }, create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: identity.memberId, status: "ACTIVE" }, update: {},
+    });
     await transaction.nekudotLedgerEntry.create({
       data: {
         programKey: NEKUDOT_PROGRAM_KEY,
@@ -457,6 +463,16 @@ export async function expireNekudotReservations() {
 
 export async function lookupNekudotMember(shop: string, rawToken: unknown) {
   await expireNekudotReservations();
+  const voucherToken = /^COHENS:VALES:([a-zA-Z0-9_-]+)$/.exec(String(rawToken ?? "").trim());
+  if (voucherToken) {
+    const wallet = await db.communityVoucherWallet.findFirst({
+      where: { id: voucherToken[1], programKey: NEKUDOT_PROGRAM_KEY, status: "ACTIVE", member: { active: true, identities: { some: { shop } } } },
+      include: { member: { include: { broker: true, credentials: { where: { active: true } }, identities: true } } },
+    });
+    if (!wallet) throw new NekudotError("No encontramos una tarjeta de vales activa para esta tienda.", 404, "VOUCHER_NOT_FOUND");
+    return { ...wallet.member, availableCents: wallet.member.balanceCents - wallet.member.reservedCents,
+      currentShopIdentity: wallet.member.identities.find((item) => item.shop === shop) ?? null };
+  }
   const credential = await db.nekudotCredential.findUnique({
     where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: tokenHash(rawToken) } },
     include: {
