@@ -13,6 +13,9 @@
 .nfc-install-copy > strong { font-size: 15px; }
 .nfc-install-copy > small { color: #65756e; font-size: 10px; line-height: 1.5; }
 .nfc-install-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.nfc-install-actions button { border: 1px solid #237153; border-radius: 8px; padding: 10px 14px; color: white; background: #237153; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; min-height: 40px; }
+.nfc-install-actions button:disabled { cursor: wait; opacity: .6; }
+.nfc-install-actions button:focus-visible { outline: 3px solid #d6a537; outline-offset: 2px; }
 .nfc-install-actions a { border: 1px solid #c8d6ce; border-radius: 8px; padding: 8px 10px; color: #285d47; background: white; font-size: 10px; font-weight: 900; text-decoration: none; }
 .nfc-install-actions a.primary { border-color: #237153; color: white; background: #237153; }
 .nfc-install-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 0; padding: 0; list-style: none; counter-reset: install-step; }

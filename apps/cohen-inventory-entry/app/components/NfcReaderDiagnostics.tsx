@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NfcBridgeRecovery } from "./NfcBridgeRecovery";
 import {
   NEKUDOT_NFC_BRIDGE_URL,
   nfcBridgeEventCredential,
@@ -208,6 +209,16 @@ export function NfcReaderDiagnostics({ lookupEndpoint, locationLabel }: Props) {
         {testPassed ? "APROBADO" : running ? `${reads.length}/${REQUIRED_READS}` : "LISTO"}
       </span>
     </div>
+
+    {locationLabel === "Tienda" ? <NfcBridgeRecovery windows={computerPlatform === "windows"} onRecovered={() => {
+      runningRef.current = false;
+      setRunning(false);
+      sequenceRef.current = null;
+      setReads([]);
+      setKeyboardFallbackObserved(false);
+      lookupRunRef.current++;
+      setLookup({ state: "idle" });
+    }} /> : null}
 
     <div className={`nfc-install-card ${bridgeError ? "recommended" : ""}`}>
       <div className="nfc-install-copy">
