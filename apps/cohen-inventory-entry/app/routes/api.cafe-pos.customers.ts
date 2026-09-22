@@ -8,6 +8,7 @@ import {
   activateCafeCustomerMembership,
   getCafeCustomerMembership,
   listCafeCustomerProfiles,
+  linkCafeSharedMember,
   removeCafeCustomerCredential,
   saveCafeCustomerProfile,
   syncCafeAssignedMembership,
@@ -36,6 +37,9 @@ export async function action({ request }: ActionFunctionArgs) {
       cardTier?: unknown;
       [key: string]: unknown;
     };
+    if (body.intent === "selectSharedMember") {
+      return Response.json({ ok: true, customer: await linkCafeSharedMember(request, body) });
+    }
     if (body.intent === "saveProfile") {
       const customer = await saveCafeCustomerProfile(request, body);
       return Response.json({

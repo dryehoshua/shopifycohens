@@ -21,6 +21,7 @@ import {
 import { cashbackBasisPointsForTier, NEKUDOT_PROGRAM_KEY, normalizeBrokerCode } from "./nekudot-domain";
 import { memberCardData } from "./nekudot-registration.server";
 import { resolvePosMembershipAssignment } from "./pos-membership-profile.server";
+import { exactCafeContactMatch } from "./cafe-wallet-domain";
 
 type PosSurface = "CAFE" | "RETAIL";
 
@@ -300,8 +301,69 @@ async function listPosCustomerProfiles(surface: PosSurface, request: Request, se
   });
 }
 
-export function listCafeCustomerProfiles(request: Request, search: string) {
-  return listPosCustomerProfiles("CAFE", request, search);
+export async function listCafeCustomerProfiles(request: Request, search: string) {
+  const customers = await listPosCustomerProfiles("CAFE", request, search);
+  const session = await currentCafeSession(request);
+  const members = await db.nekudotMember.findMany({
+    where: { programKey: NEKUDOT_PROGRAM_KEY, active: true, identities: { none: { shop: session!.shop } } },
+    include: { broker: true, credentials: { where: { active: true } } },
+    orderBy: { displayName: "asc" },
+  });
+  const query = search.trim().toLocaleLowerCase("es-MX");
+  const shared = members.filter((member) => !query || [member.displayName, member.email, member.phone].join(" ").toLocaleLowerCase("es-MX").includes(query));
+  return [...customers, ...shared.map((member) => ({
+    id: `nekudot:${member.id}`, sharedMemberId: member.id, displayName: member.displayName,
+    email: member.email, phone: member.phone, member: memberSummary(member),
+  }))];
+}
+
+// A cashier explicitly verifies the person; never merge or change their membership.
+export async function linkCafeSharedMember(request: Request, raw: Record<string, unknown>) {
+  const { shop, admin } = await posContext("CAFE", request);
+  if (raw.identityVerified !== true) throw posError("CAFE", "Confirma el nombre y teléfono del cliente antes de vincularlo.");
+  const member = await db.nekudotMember.findFirst({
+    where: { id: String(raw.memberId || ""), programKey: NEKUDOT_PROGRAM_KEY, active: true },
+    include: { broker: true, credentials: { where: { active: true } }, identities: true },
+  });
+  if (!member) throw posError("CAFE", "No se encontró la membresía activa.", 404);
+  const linked = member.identities.find((identity) => identity.shop === shop);
+  if (linked) return customerResult(await customerById("CAFE", admin, linked.shopifyCustomerId), member);
+  if (!member.email && !member.phone) throw posError("CAFE", "Completa primero el teléfono o correo en el perfil original.", 409);
+  const terms = [
+    ...(member.email ? [`email:${JSON.stringify(member.email)}`] : []),
+    ...(member.phone ? [`phone:${JSON.stringify(member.phone)}`] : []),
+  ];
+  const matches = await graphql<{ customers: { nodes: ShopifyCustomer[]; pageInfo: { hasNextPage: boolean } } }>("CAFE", admin, `#graphql
+    query CafeSharedMember($query: String!) {
+      customers(first: 10, query: $query) { nodes { ${CUSTOMER_FIELDS} } pageInfo { hasNextPage } }
+    }
+  `, { query: terms.join(" OR ") });
+  if (matches.customers.pageInfo.hasNextPage || matches.customers.nodes.length > 1) throw posError("CAFE", "Hay varios clientes con esos datos. Resuelve los duplicados antes de vincular la membresía.", 409);
+  let customer = matches.customers.nodes[0];
+  if (customer && !exactCafeContactMatch(member, { email: customer.defaultEmailAddress?.emailAddress || null, phone: customer.defaultPhoneNumber?.phoneNumber || null })) {
+    throw posError("CAFE", "La coincidencia no tiene el mismo teléfono o correo. Verifica el perfil antes de vincularlo.", 409);
+  }
+  if (!customer) {
+    const created = await graphql<{ customerCreate: { customer: ShopifyCustomer | null; userErrors: Array<{ message: string }> } }>("CAFE", admin, `#graphql
+      mutation CafeSharedMemberCreate($input: CustomerInput!) {
+        customerCreate(input: $input) { customer { ${CUSTOMER_FIELDS} } userErrors { message } }
+      }
+    `, { input: { firstName: member.displayName, email: member.email, phone: member.phone, tags: ["NEKUDOT_ACTIVO", `NEKUDOT_${member.cardTier}`] } });
+    mutationErrors("CAFE", created.customerCreate.userErrors);
+    if (!created.customerCreate.customer) throw posError("CAFE", "No se pudo crear el perfil de cafetería.", 502);
+    customer = created.customerCreate.customer;
+  }
+  const target = customer;
+  await db.$transaction(async (transaction) => {
+    const existing = await transaction.nekudotCustomerIdentity.findUnique({ where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: target.id } } });
+    if (existing && existing.memberId !== member.id) throw posError("CAFE", "Este cliente ya tiene otra membresía. No se han mezclado los saldos.", 409);
+    await transaction.nekudotCustomerIdentity.upsert({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: target.id } },
+      create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: member.id, shop, shopifyCustomerId: target.id, shopifyLegacyCustomerId: String(target.legacyResourceId), displayName: target.displayName, email: target.defaultEmailAddress?.emailAddress || null },
+      update: {},
+    });
+  });
+  return customerResult(target, member);
 }
 
 export function listRetailCustomerProfiles(request: Request, search: string) {

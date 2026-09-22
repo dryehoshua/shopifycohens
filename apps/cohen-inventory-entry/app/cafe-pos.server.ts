@@ -16,14 +16,17 @@ import {
   cancelNekudotReservation,
   listShopifyCustomers,
   lookupNekudotMember,
+  lookupNekudotCustomer,
   reconcileNekudotOrder,
   replaceNekudotCredential,
   renewNekudotReservation,
-  reserveNekudot,
+  reserveNekudotForMember,
   searchShopifyCustomers,
 } from "./nekudot.server";
+import { reserveCommunityVoucher, renewCommunityVoucherReservation, cancelCommunityVoucherReservation } from "./community-wallet.server";
 import { cashbackBasisPointsForTier } from "./nekudot-domain";
 import { parseOptionalNekudotMoney } from "./pos-nekudot-money";
+import { cafeWalletChoice } from "./cafe-wallet-domain";
 import {
   resolvePosMembershipAssignment,
   updateAssignedMemberProfile,
@@ -769,6 +772,12 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
   let nekudotRedemption = sale?.nekudotRedemptionId
     ? await db.nekudotRedemption.findUnique({ where: { id: sale.nekudotRedemptionId } })
     : null;
+  let communityVoucherRedemption = sale?.communityVoucherRedemptionId
+    ? await db.communityVoucherRedemption.findUnique({ where: { id: sale.communityVoucherRedemptionId } })
+    : null;
+  if (sale && communityVoucherRedemption && communityVoucherRedemption.status !== "APPLIED") {
+    communityVoucherRedemption = await renewCommunityVoucherReservation(session!.shop, communityVoucherRedemption.id);
+  }
 
   if (!nekudotMember && selectedCustomer) {
     const identity = await db.nekudotCustomerIdentity.findUnique({
@@ -792,8 +801,10 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
     nekudotRedemption = await renewNekudotReservation(session!.shop, nekudotRedemption.id);
   }
 
-  if (!sale && String(raw.nekudotCredential ?? "").trim()) {
-    nekudotMember = await lookupNekudotMember(session!.shop, raw.nekudotCredential);
+  if (!sale && (String(raw.nekudotCredential ?? "").trim() || raw.useCustomerWallet === true)) {
+    nekudotMember = String(raw.nekudotCredential ?? "").trim()
+      ? await lookupNekudotMember(session!.shop, raw.nekudotCredential)
+      : await lookupNekudotCustomer(session!.shop, String(raw.customerId || ""));
     const credentialIdentity = nekudotMember.identities.find((identity) => identity.shop === session!.shop);
     if (selectedCustomer && credentialIdentity && credentialIdentity.shopifyCustomerId !== selectedCustomer.id) {
       throw new CafePosError(
@@ -811,11 +822,20 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
         "NEKUDOT_EXCEEDS_TOTAL",
       );
     }
-    if (requestedCents) {
-      nekudotRedemption = await reserveNekudot({
+    const wallet = cafeWalletChoice(raw.redemptionWallet);
+    if (requestedCents && wallet === "voucher") {
+      communityVoucherRedemption = await reserveCommunityVoucher({
         shop: session!.shop,
-        rawToken: raw.nekudotCredential,
+        memberId: nekudotMember.id,
         amount: requestedAmount,
+        cartReference: idempotencyKey,
+        idempotencyKey: `cafe-voucher:${idempotencyKey}`,
+      });
+    } else if (requestedCents) {
+      nekudotRedemption = await reserveNekudotForMember({
+        shop: session!.shop,
+        memberId: nekudotMember.id,
+        amountCents: requestedCents,
         cartTotalCents: grossTotalCents,
         cartReference: idempotencyKey,
         idempotencyKey: `cafe-redemption:${idempotencyKey}`,
@@ -823,8 +843,14 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
     }
   }
 
+  if (!sale && parseOptionalNekudotMoney(String(raw.nekudotRedeemAmount ?? "")) > 0 && !nekudotRedemption && !communityVoucherRedemption) {
+    throw new CafePosError("Identifica al cliente y selecciona su saldo antes de canjear.", 409, "MEMBER_REQUIRED");
+  }
+
   const nekudotRedeemedCents = nekudotRedemption?.amountCents ?? 0;
-  const totalCents = grossTotalCents - nekudotRedeemedCents;
+  const communityVoucherRedeemedCents = communityVoucherRedemption?.amountCents ?? 0;
+  const totalRedemptionCents = nekudotRedeemedCents + communityVoucherRedeemedCents;
+  const totalCents = grossTotalCents - totalRedemptionCents;
   const rateBasisPoints = taxRateBasisPoints();
   const taxCents = includedTaxCents(totalCents, rateBasisPoints);
   const receiptItems: Array<CafeReceiptItem & { variantId: string }> = resolved.map((item) => ({
@@ -856,6 +882,8 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
           nekudotMemberId: nekudotMember?.id ?? null,
           nekudotRedemptionId: nekudotRedemption?.id ?? null,
           nekudotRedeemedCents,
+          communityVoucherRedemptionId: communityVoucherRedemption?.id ?? null,
+          communityVoucherRedeemedCents,
         },
         include: { staff: { select: { name: true } } },
       });
@@ -863,6 +891,7 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
       if (nekudotRedemption) {
         await cancelNekudotReservation(session!.shop, nekudotRedemption.id).catch(() => undefined);
       }
+      if (communityVoucherRedemption) await cancelCommunityVoucherReservation(session!.shop, communityVoucherRedemption.id).catch(() => undefined);
       throw error;
     }
   }
@@ -881,6 +910,7 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
       const taxRate = rateBasisPoints / 10_000;
       const customAttributes = [
         { key: "cafe_pos_sale_id", value: sale.id },
+        ...(communityVoucherRedemption ? [{ key: "community_voucher_redemption_id", value: communityVoucherRedemption.id }] : []),
         { key: "cafe_pos_staff", value: sale.staff.name },
         { key: "cafe_pos_payment", value: paymentGateway(method) },
         ...(sale.externalReference ? [{ key: "cafe_pos_external_reference", value: sale.externalReference }] : []),
@@ -915,12 +945,12 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
                 }]
               : [],
           })),
-          ...(nekudotRedeemedCents ? {
+          ...(totalRedemptionCents ? {
             discountCode: {
               itemFixedDiscountCode: {
-                code: `NEKUDOT-${nekudotRedemption!.id.slice(-8).toUpperCase()}`,
+                code: `${communityVoucherRedemption ? "VALES" : "NEKUDOT"}-${sale.id.slice(-8).toUpperCase()}`,
                 amountSet: {
-                  shopMoney: { amount: (nekudotRedeemedCents / 100).toFixed(2), currencyCode },
+                  shopMoney: { amount: (totalRedemptionCents / 100).toFixed(2), currencyCode },
                 },
               },
             },
@@ -988,6 +1018,7 @@ export async function createCafeSale(request: Request, raw: Record<string, unkno
       orderUpdatedAt: syncedSale.syncedAt ?? new Date(),
       purchaseCents: totalCents,
       customAttributes: [
+        ...(communityVoucherRedemption ? [{ key: "community_voucher_redemption_id", value: communityVoucherRedemption.id }] : []),
         { key: "nekudot_member_id", value: nekudotMember.id },
         ...(nekudotRedemption ? [{ key: "nekudot_redemption_id", value: nekudotRedemption.id }] : []),
       ],

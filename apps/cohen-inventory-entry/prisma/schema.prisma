@@ -423,6 +423,8 @@ model CafeRegisterShift {
 /// Intento de venta de la POS. Se crea antes de llamar a Shopify para poder
 /// reintentar y reconciliar sin duplicar pedidos después de una falla de red.
 model CafeSale {
+  communityVoucherRedemptionId String?
+  communityVoucherRedeemedCents Int @default(0)
   id                   String            @id @default(cuid())
   shop                 String
   idempotencyKey       String
