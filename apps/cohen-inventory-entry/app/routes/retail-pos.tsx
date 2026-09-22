@@ -725,14 +725,25 @@ export default function RetailPos() {
     setIdentityVerified(false);
   }
 
-  function selectCustomerForSale(item: Customer) {
+  async function selectCustomerForSale(item: Customer) {
     setCustomer(item); setMember(null); setCredential(""); setNekudotAmount("0"); setUseMaximumNekudot(false); setDrawer(null);
     setMessage({
       tone: item.member ? "success" : "info",
       text: item.member
-        ? `${item.displayName} identificado por su perfil Shopify. Tarjeta ${membershipLabel(item.member)}; para canjear saldo, lee su tarjeta.`
+        ? `${item.displayName} seleccionado. Sus compras acumulan Nekudot automáticamente.`
         : `${item.displayName} seleccionado. Asigna una tarjeta para activar su membresía Nekudot.`,
     });
+    if (!item.member) return;
+    setBusy(true);
+    try {
+      const result = await api<{ member: Member }>("/api/retail-pos/nekudot", {
+        method: "POST", body: JSON.stringify({ intent: "lookup", customerId: item.id }),
+      });
+      setMember(result.member);
+      setRedemptionWallet(result.member.cardTier === "VOUCHER" ? "voucher" : "nekudot");
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "No pudimos cargar los beneficios del cliente." });
+    } finally { setBusy(false); }
   }
 
   function chooseCustomer(item: Customer, preserveCredential = false) {
@@ -912,7 +923,7 @@ export default function RetailPos() {
           customerId: customer?.id,
           items: cart.map((line) => ({ variantId: line.variant.id, quantity: line.quantity })),
           ...(member ? { nekudotCredential: credential, nekudotRedeemAmount: (appliedNekudotCents / 100).toFixed(2) } : {}),
-          ...(member ? { redemptionWallet } : {}),
+          ...(member ? { redemptionWallet, useCustomerWallet: !credential } : {}),
         }),
       });
       clearCurrentSale(); setSales((current) => [result.sale, ...current.filter((sale) => sale.id !== result.sale.id)]);
@@ -1198,7 +1209,8 @@ export default function RetailPos() {
         {customerEditorMode ? <><PosCustomerProfileEditor key={`${customerEditorMode}-${selectedCustomer?.id || "new"}`} customer={customerEditorMode === "edit" ? selectedCustomer : null} busy={busy} onCancel={() => setCustomerEditorMode(null)} onSave={saveCustomerProfile} />{customerEditorMode === "edit" && selectedCustomer ? <PosCustomerMembershipManager customer={selectedCustomer} endpoint="/api/retail-pos/customers" staffRole={initial.staff?.role} onCustomerUpdated={syncCustomerRecord} onMessage={setMessage} /> : null}</> : null}
         <div className="retail-customer-search-heading"><strong>Clientes de Cohen&apos;s</strong><small>Esta lista pertenece a la tienda Shopify de retail; escribe solo para filtrar</small></div>
         <div className="retail-customer-search"><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Filtrar por nombre, teléfono o correo…" /></div>
-        <div className="retail-customer-results">{visibleCustomers.map((item) => <button key={item.id} title="Doble clic para abrir todos sus datos y tarjetas" className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item)} onDoubleClick={() => { chooseCustomer(item); setCustomerEditorMode("edit"); }}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
+        <p>Doble clic en un cliente para seleccionarlo en la venta. También puedes elegirlo y pulsar “Usar en la venta”.</p>
+        <div className="retail-customer-results">{visibleCustomers.map((item) => <button key={item.id} disabled={busy} title="Doble clic para seleccionar en la venta" className={selectedCustomer?.id === item.id ? "selected" : ""} onClick={() => chooseCustomer(item)} onDoubleClick={() => { void selectCustomerForSale(item); }}><span className="retail-customer-avatar">{item.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{item.displayName}</strong><small>{item.phone || item.email || "Sin teléfono ni correo"} · {item.numberOfOrders || 0} pedidos</small><em className={item.member ? "active" : ""}>{item.member ? `${membershipLabel(item.member)} · ${formatMoney(item.member.availableCents)} Nekudot · ${item.member.credentialCount} tarjeta(s)` : "Sin tarjeta Nekudot"}</em></span><i>{selectedCustomer?.id === item.id ? "✓" : "›"}</i></button>)}</div>
         {customersLoading ? <div className="retail-empty compact"><strong>Cargando clientes…</strong></div> : null}
         {customersLoaded && !customersLoading && !visibleCustomers.length ? <div className="retail-empty compact"><strong>No encontramos coincidencias</strong><span>Prueba otro nombre, teléfono o correo.</span></div> : null}
         {selectedCustomer && !customerEditorMode ? <section className="retail-customer-profile">

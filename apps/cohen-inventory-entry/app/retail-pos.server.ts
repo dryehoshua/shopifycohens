@@ -15,9 +15,10 @@ import {
   cancelNekudotReservation,
   listShopifyCustomers,
   lookupNekudotMember,
+  lookupNekudotCustomer,
   replaceNekudotCredential,
   renewNekudotReservation,
-  reserveNekudot,
+  reserveNekudotForMember,
   searchShopifyCustomers,
 } from "./nekudot.server";
 import { cashbackBasisPointsForTier } from "./nekudot-domain";
@@ -705,8 +706,10 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
   if (sale && communityVoucherRedemption && communityVoucherRedemption.status !== "APPLIED") {
     communityVoucherRedemption = await renewCommunityVoucherReservation(session!.shop, communityVoucherRedemption.id);
   }
-  if (!sale && String(raw.nekudotCredential ?? "").trim()) {
-    nekudotMember = await lookupNekudotMember(session!.shop, raw.nekudotCredential);
+  if (!sale && (String(raw.nekudotCredential ?? "").trim() || raw.useCustomerWallet === true)) {
+    nekudotMember = String(raw.nekudotCredential ?? "").trim()
+      ? await lookupNekudotMember(session!.shop, raw.nekudotCredential)
+      : await lookupNekudotCustomer(session!.shop, String(raw.customerId || ""));
     const requestedAmount = String(raw.nekudotRedeemAmount ?? "").trim();
     const requestedCents = parseOptionalNekudotMoney(requestedAmount);
     if (requestedCents > grossCents - manualDiscountCents) throw new RetailPosError("El canje supera el total después del descuento.", 409, "NEKUDOT_EXCEEDS_TOTAL");
@@ -719,10 +722,10 @@ export async function createRetailSale(request: Request, raw: Record<string, unk
         idempotencyKey: `retail-voucher:${idempotencyKey}`,
       });
     } else if (requestedCents) {
-      nekudotRedemption = await reserveNekudot({
+      nekudotRedemption = await reserveNekudotForMember({
         shop: session!.shop,
-        rawToken: raw.nekudotCredential,
-        amount: requestedAmount,
+        memberId: nekudotMember.id,
+        amountCents: requestedCents,
         cartTotalCents: grossCents - manualDiscountCents,
         cartReference: idempotencyKey,
         idempotencyKey: `retail-redemption:${idempotencyKey}`,

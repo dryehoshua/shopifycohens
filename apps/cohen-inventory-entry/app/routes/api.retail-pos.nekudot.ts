@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { assertRetailSameOrigin, currentRetailSession, retailPosJsonError } from "../retail-pos.server";
-import { lookupNekudotMember, NekudotError } from "../nekudot.server";
+import { lookupNekudotCustomer, lookupNekudotMember, NekudotError } from "../nekudot.server";
 import { cashbackBasisPointsForTier } from "../nekudot-domain";
 import { communityVoucherForMember } from "../community-wallet.server";
 
@@ -58,11 +58,13 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     assertRetailSameOrigin(request);
     const session = await currentRetailSession(request);
-    const body = await request.json() as { intent?: unknown; credential?: unknown };
+    const body = await request.json() as { intent?: unknown; credential?: unknown; customerId?: unknown };
     if (String(body.intent ?? "lookup") !== "lookup") {
       return Response.json({ ok: false, error: "Acción no válida." }, { status: 405 });
     }
-    const member = await lookupNekudotMember(session!.shop, body.credential);
+    const member = body.customerId
+      ? await lookupNekudotCustomer(session!.shop, String(body.customerId))
+      : await lookupNekudotMember(session!.shop, body.credential);
     return Response.json({ ok: true, member: await memberWithVoucher(member) });
   } catch (error) {
     return nekudotJsonError(error);

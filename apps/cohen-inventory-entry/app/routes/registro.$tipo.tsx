@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
 import { data as responseData, Form, redirect, useActionData, useLoaderData, useParams, useSearchParams } from "react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import stylesheet from "../nekudot-public.css?url";
 import { NEKUDOT_COMMUNITIES } from "../nekudot-domain";
 import { nekudotMeta } from "../nekudot-meta";
@@ -68,7 +68,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   try {
     if (intent === "verify-existing") {
       const result = await verifyExistingRegistrationOtp(form.get("matchToken"), form.get("code"));
-      return redirect("/nekudot", { headers: { "Set-Cookie": result.cookie } });
+      return responseData({ ok: true as const, step: "linked" as const }, { headers: { "Set-Cookie": result.cookie } });
     }
 
     if (intent === "choose-existing" && String(form.get("existingMatch") || "") !== "none") {
@@ -88,7 +88,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     );
   } catch (error) {
     const caught = error instanceof RegistrationError ? error : new RegistrationError("No se pudo completar el registro.", 500);
-    if (intent === "choose-existing") {
+    if (intent === "choose-existing" || (intent === "review" && caught.status === 409)) {
       try {
         const review = await findRegistrationMatches(form, params.tipo);
         return Response.json({ ok: false as const, step: "matches" as const, error: caught.message, ...review }, { status: caught.status });
@@ -118,16 +118,38 @@ export default function RegistrationPage() {
   const matchReview = data && data.step === "matches" ? data : null;
   const verification = data && data.step === "verify-existing" ? data : null;
   const submitted = matchReview?.submitted;
+  const matchesRef = useRef<HTMLFieldSetElement>(null);
+  const [selectedMatch, setSelectedMatch] = useState("");
+  const selectedAccount = matchReview?.matches.find((match) => match.token === selectedMatch);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [community, setCommunity] = useState("");
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview); }, [photoPreview]);
   useEffect(() => {
+    if (window.parent === window) return;
+    const shell = document.querySelector(".nk-shell");
+    if (!shell) return;
+    const reportSize = () => window.parent.postMessage({ type: "cohens-registration-size", height: Math.ceil(shell.getBoundingClientRect().height) }, "https://cohenskosher.com");
+    const observer = new ResizeObserver(reportSize);
+    observer.observe(shell);
+    reportSize();
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!matchReview) return;
+    setSelectedMatch("");
+    matchesRef.current?.focus();
+    matchesRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [matchReview]);
+  useEffect(() => {
     if (!result || result.checkoutUrl) return;
     const timer = window.setTimeout(() => window.top?.location.assign("https://account.cohenskosher.com"), 1800);
     return () => window.clearTimeout(timer);
   }, [result]);
+  useEffect(() => {
+    if (data?.ok && data.step === "linked") window.top?.location.assign("https://account.cohenskosher.com");
+  }, [data]);
   const liveName = `${firstName} ${lastName}`.trim() || (submitted ? `${submitted.firstName} ${submitted.lastName}` : "");
   const referredIbCode = submitted?.ibCode || String(searchParams.get("ib") || "").slice(0, 40);
   const description = tipo === "plata"
@@ -137,6 +159,8 @@ export default function RegistrationPage() {
       : tipo === "golden"
         ? "Completa tus datos y activa tu suscripción de $300 MXN al mes para recibir el beneficio Golden de 8%."
         : "Crea tu tarjeta comunitaria; el saldo se asignará cuando reciba fondeo de patrocinadores.";
+
+  if (data?.ok && data.step === "linked") return <main className="nk-shell"><section className="nk-panel"><h1>Cuenta confirmada</h1><p>Tu tarjeta y tus puntos se conservan. Continúa en tu cuenta Cohen's.</p><a className="nk-button" href="https://account.cohenskosher.com" target="_top">Abrir mi cuenta Cohen's</a></section></main>;
 
   return <main className="nk-shell">
     <header className="nk-brand"><span className="nk-mark">C</span><div><strong>Cohen&apos;s · Nekudot</strong><small>Beneficios que regresan a la comunidad</small></div></header>
@@ -151,8 +175,8 @@ export default function RegistrationPage() {
           <label className="nk-field">Nombre<input name="firstName" required minLength={2} maxLength={60} autoComplete="given-name" defaultValue={submitted?.firstName} onChange={(event) => setFirstName(event.currentTarget.value)} /></label>
           <label className="nk-field">Apellidos<input name="lastName" required minLength={2} maxLength={80} autoComplete="family-name" defaultValue={submitted?.lastName} onChange={(event) => setLastName(event.currentTarget.value)} /></label>
           <label className="nk-field full">Comunidad<select name="community" required defaultValue={submitted?.community || ""} onChange={(event) => setCommunity(event.currentTarget.value)}><option value="" disabled>Selecciona tu comunidad</option>{NEKUDOT_COMMUNITIES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <NekudotPhoneField defaultPhone={submitted?.phone} />
-          <label className="nk-field">Correo electrónico <small>{tipo === "golden" ? "(necesario para el pago)" : "(opcional)"}</small><input name="email" type="email" required={tipo === "golden"} autoComplete="email" defaultValue={submitted?.email} /></label>
+          <NekudotPhoneField full defaultPhone={submitted?.phone} />
+          <label className="nk-field full">Correo electrónico <small>{tipo === "golden" ? "(necesario para el pago)" : "(opcional)"}</small><input name="email" type="email" required={tipo === "golden"} autoComplete="email" defaultValue={submitted?.email} /></label>
           {tipo === "blue" ? <label className="nk-field full">Palabra o clave de tu IB<input name="ibCode" required autoCapitalize="characters" autoComplete="off" placeholder="Ej. BET-MIDRASH-CENTRO" defaultValue={referredIbCode} /><small>Escribe la palabra o clave que te entregó tu IB.</small></label> : null}
           <label className="nk-field full">Foto (opcional)<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
             if (photoPreview) URL.revokeObjectURL(photoPreview);
@@ -160,9 +184,9 @@ export default function RegistrationPage() {
           }} /></label>
           <label className="nk-honeypot" aria-hidden="true">Sitio web<input name="website" tabIndex={-1} autoComplete="off" /></label>
           <label className="nk-checkbox"><input name="privacy" type="checkbox" value="yes" required /> Acepto el aviso de privacidad y que mis datos se utilicen para administrar mi cuenta Nekudot y mis compras Cohen&apos;s.</label>
-          {matchReview ? <fieldset className="nk-existing-matches"><legend>Encontramos posibles cuentas tuyas</legend><p>Solo mostramos coincidencias exactas con el teléfono o correo que escribiste. Los datos están ocultos y antes de vincular una cuenta confirmaremos por SMS al número ya registrado.</p>{matchReview.matches.map((match) => <label key={match.token}><input type="radio" name="existingMatch" value={match.token} aria-label={`Seleccionar cuenta ${match.name}`} required /><span><strong>{match.name}</strong><small>{match.phone}{match.email ? ` · ${match.email}` : ""}</small></span></label>)}<label><input type="radio" name="existingMatch" value="none" aria-label="No soy ninguna de las cuentas encontradas" required /><span><strong>No soy ninguno de estos</strong><small>Crear mi tarjeta y continuar a Nekudot.</small></span></label></fieldset> : null}
+          {matchReview ? <fieldset className="nk-existing-matches" ref={matchesRef} tabIndex={-1}><legend>¿Alguna de estas cuentas es tuya?</legend><p>Encontramos coincidencias con tu teléfono o correo. Selecciona tu cuenta para conservar tu tarjeta y tus puntos.</p>{matchReview.matches.map((match) => <label key={match.token}><input type="radio" name="existingMatch" value={match.token} checked={selectedMatch === match.token} onChange={() => setSelectedMatch(match.token)} aria-label={`Seleccionar cuenta ${match.name}`} required /><span><strong>{match.name}</strong><small>{match.phone}{match.email ? ` · ${match.email}` : ""}</small></span></label>)}<label><input type="radio" name="existingMatch" value="none" checked={selectedMatch === "none"} onChange={() => setSelectedMatch("none")} required /><span><strong>No soy ninguna de estas personas</strong><small>Revisa tu correo y teléfono arriba antes de continuar.</small></span></label>{selectedAccount ? <div role="status"><strong>¿Confirmas que eres {selectedAccount.name}?</strong><p>{selectedAccount.requiresLogin ? "Esta cuenta no tiene teléfono registrado. Confirma tu correo iniciando sesión en Cohen's y completa tu perfil en Tarjeta Nekudot." : "Al confirmar te enviaremos un código al teléfono registrado para proteger tu saldo."}</p>{selectedAccount.requiresLogin ? <a className="nk-button" href="https://cohenskosher.com/customer_authentication/login?return_to=%2Faccount" target="_top">Sí, soy yo · confirmar con mi correo</a> : null}</div> : null}</fieldset> : null}
           {data && "error" in data && data.error ? <div className="nk-status error">{String(data.error)}</div> : null}
-          <div className="nk-actions"><button className="nk-button" name="intent" value={matchReview ? "choose-existing" : "review"}>{matchReview ? "Continuar" : tipo === "golden" ? "Registrar y continuar al pago" : "Crear mi tarjeta"}</button></div>
+          <div className="nk-actions"><button className="nk-button" disabled={Boolean(matchReview && (!selectedMatch || selectedAccount?.requiresLogin))} name="intent" value={matchReview ? "choose-existing" : "review"}>{selectedAccount ? "Sí, soy yo · continuar" : matchReview ? "Revisar mis datos y continuar" : tipo === "golden" ? "Registrar y continuar al pago" : "Crear mi tarjeta"}</button></div>
         </Form>}
       </section>
       <aside className={`nk-card${cardClass(tipo)}`}>

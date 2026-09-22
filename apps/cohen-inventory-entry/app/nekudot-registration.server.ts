@@ -598,6 +598,7 @@ async function createRegistrationMatches(input: {
       phone: phone ? maskedPhone(phone) : "Sin teléfono verificable",
       email: email ? maskedContactEmail(email) : null,
       cardTier: "CLIENTE_SHOPIFY",
+      requiresLogin: !phone,
     };
   }));
 }
@@ -647,18 +648,20 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   const ibCode = kind === "blue" ? String(formData.get("ibCode") || "").trim().slice(0, 40) : "";
   const shop = registrationShop();
 
+  const { admin } = await unauthenticated.admin(shop);
+  const shopifyCandidates = await registrationCandidates(admin, email, phone);
   const members = await db.nekudotMember.findMany({
     where: {
       programKey: NEKUDOT_PROGRAM_KEY,
       active: true,
-      phone: { not: null },
-      OR: [{ phone }, ...(email ? [{ email }] : [])],
+      OR: [
+        { phone }, ...(email ? [{ email }] : []),
+        { identities: { some: { shop, shopifyCustomerId: { in: shopifyCandidates.map((customer) => customer.id) } } } },
+      ],
     },
     orderBy: { updatedAt: "desc" },
-    take: 5,
+    take: 8,
   });
-  const { admin } = await unauthenticated.admin(shop);
-  const shopifyCandidates = await registrationCandidates(admin, email, phone);
   const linkedCustomerIds = new Set((await db.nekudotCustomerIdentity.findMany({
     where: { shop, shopifyCustomerId: { in: shopifyCandidates.map((customer) => customer.id) } },
     select: { shopifyCustomerId: true },
@@ -669,7 +672,7 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
   const customerMatches = await createRegistrationMatches({
     shop,
     kind,
-    candidates: shopifyCandidates.filter((customer) => Boolean(customer.defaultPhoneNumber?.phoneNumber) && !linkedCustomerIds.has(customer.id)),
+    candidates: shopifyCandidates.filter((customer) => !linkedCustomerIds.has(customer.id)),
     requestedData,
   });
 
@@ -678,9 +681,10 @@ export async function findRegistrationMatches(formData: FormData, kindValue: unk
     matches: [...members.map((member) => ({
       token: existingMemberToken(member.id),
       name: maskedName(member.displayName),
-      phone: `•••• ${member.phone!.slice(-4)}`,
+      phone: maskedPhone(member.phone),
       email: maskedEmail(member.email),
       cardTier: member.cardTier,
+      requiresLogin: !member.phone,
     })), ...customerMatches].slice(0, 8),
   };
 }
@@ -790,6 +794,11 @@ export async function onboardCustomerAccount(
   customerId: string,
   raw: Record<string, unknown>,
 ) {
+  const linked = await db.nekudotCustomerIdentity.findUnique({
+    where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
+    include: { member: true },
+  });
+  if (linked) return { memberId: linked.memberId, displayName: linked.member.displayName };
   let profile;
   try {
     profile = normalizeCafeCustomerProfile({
@@ -810,6 +819,17 @@ export async function onboardCustomerAccount(
   const { admin } = await unauthenticated.admin(shop);
   const customer = await customerById(admin, customerId);
   const email = customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() || profile.email;
+  const candidates = await db.nekudotMember.findMany({
+    where: { programKey: NEKUDOT_PROGRAM_KEY, OR: [{ phone: profile.phone }, ...(email ? [{ email }] : [])] },
+    include: { identities: true }, take: 3,
+  });
+  if (candidates.some((candidate) => candidate.identities.some((identity) => identity.shop === shop && identity.shopifyCustomerId !== customerId))) {
+    throw new RegistrationError("Ya tienes una tarjeta asociada a otra cuenta de la tienda. Confirma tu cuenta existente desde el registro Nekudot o solicita unificarla en tienda; conservaremos tus puntos.", 409);
+  }
+  if (candidates.some((candidate) => !email || candidate.email?.trim().toLowerCase() !== email)) {
+    throw new RegistrationError("Encontramos una tarjeta con ese teléfono. Confirma que es tuya con el código SMS desde el registro Nekudot antes de vincularla.", 409);
+  }
+  if (candidates.length > 1) throw new RegistrationError("Encontramos varias tarjetas con tus datos. Solicita unificar tu cuenta en tienda para conservar todos tus puntos.", 409);
   const profileValue = JSON.stringify({
     version: 1,
     community: profile.community,

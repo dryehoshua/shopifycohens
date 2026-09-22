@@ -461,6 +461,15 @@ export async function expireNekudotReservations() {
   }
 }
 
+export async function lookupNekudotCustomer(shop: string, customerId: string) {
+  const identity = await db.nekudotCustomerIdentity.findUnique({
+    where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
+    include: { member: { include: { broker: true, credentials: { where: { active: true } }, identities: true } } },
+  });
+  if (!identity?.member.active) throw new NekudotError("Este cliente no tiene una membresía activa vinculada.", 404, "MEMBER_NOT_FOUND");
+  return { ...identity.member, availableCents: identity.member.balanceCents - identity.member.reservedCents, currentShopIdentity: identity };
+}
+
 export async function lookupNekudotMember(shop: string, rawToken: unknown) {
   await expireNekudotReservations();
   const voucherToken = /^COHENS:VALES:([a-zA-Z0-9_-]+)$/.exec(String(rawToken ?? "").trim());
