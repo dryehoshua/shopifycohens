@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { NEKUDOT_STOREFRONT_LAYOUT } from "../nekudot-storefront-layout";
 
 const PAGES = {
   plata: "Registro Nekudot Plata",
@@ -29,6 +30,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const source = sourceUrl.toString();
   return proxy.liquid(`
     <style>
+      ${NEKUDOT_STOREFRONT_LAYOUT}
       .nk-form-shell{max-width:1180px;margin:0 auto;padding:18px 16px 54px}.nk-form-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:12px 16px;border:1px solid #e3dac8;border-radius:16px;background:#fff}.nk-form-nav strong{color:#123b2a}.nk-form-nav a{color:#123b2a;font-weight:750;text-decoration:none}.nk-form-frame{display:block;width:100%;height:max(980px,calc(100vh - 130px));border:0;border-radius:22px;background:#f8f4ea;box-shadow:0 14px 38px rgba(18,59,42,.12)}@media(max-width:749px){.nk-form-shell{padding:8px 0 30px}.nk-form-nav{margin:0 10px 10px}.nk-form-frame{border-radius:0;height:1250px}}
     </style>
     <main class="nk-form-shell">
