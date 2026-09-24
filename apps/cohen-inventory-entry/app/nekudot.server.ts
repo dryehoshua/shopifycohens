@@ -254,7 +254,7 @@ export async function bindNekudotCredential(input: {
       data: {
         displayName: customer.displayName || "Cliente sin nombre",
         email: customer.defaultEmailAddress?.emailAddress ?? null,
-        active: true,
+        active: currentMember?.cardTier === "GOLDEN" ? currentMember.active : true,
         cardTier: effectiveTier,
         brokerId,
       },

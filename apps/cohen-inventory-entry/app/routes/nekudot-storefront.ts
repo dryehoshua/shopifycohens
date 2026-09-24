@@ -196,7 +196,7 @@ async function dashboard(proxy: ProxyContext, shop: string, customerId: string) 
     where: { shop_shopifyCustomerId: { shop, shopifyCustomerId: customerId } },
     include: { member: true },
   });
-  if (!identity?.member.active) return null;
+  if (!identity) return null;
   const response = await proxy.admin.graphql(`#graphql
     query NekudotStorefrontContact($id: ID!) {
       customer(id: $id) {
