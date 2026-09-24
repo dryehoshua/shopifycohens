@@ -1129,6 +1129,10 @@ export async function processMercadoPagoWebhook(request: Request) {
     const subscriptionStatus = String(subscription.status || "PENDING").toLowerCase();
     const active = subscriptionStatus === "authorized";
     const inactive = ["paused", "cancelled", "canceled"].includes(subscriptionStatus);
+    if (active && !await db.nekudotLedgerEntry.findFirst({ where: { memberId: record.memberId, type: "GOLDEN_RECHARGE", amountCents: { gt: 0 } } })) {
+      await db.nekudotMembershipPayment.update({ where: { id: record.id }, data: { status: "SUBSCRIPTION_AUTHORIZED", rawPayload: subscription } });
+      return { approved: false, subscriptionStatus, awaitingPayment: true };
+    }
     if (!active && !inactive) {
       await db.nekudotMembershipPayment.update({
         where: { id: record.id },

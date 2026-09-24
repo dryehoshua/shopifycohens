@@ -19,6 +19,7 @@ globalThis.__goldDb = {
     update: async (args) => { state.members.push(args.data); for (const [key, value] of Object.entries(args.data)) state.member[key] = value && typeof value === 'object' && 'increment' in value ? state.member[key] + value.increment : value; return state.member; },
   },
   nekudotLedgerEntry: {
+    findFirst: async () => state.ledger.find((item) => item.type === 'GOLDEN_RECHARGE'),
     findUnique: async ({ where }) => state.ledger.find((item) => item.idempotencyKey === where.programKey_idempotencyKey.idempotencyKey),
     create: async ({ data }) => { state.ledger.push(data); return data; },
   },
@@ -105,8 +106,8 @@ try {
   assert.equal(state.member.balanceCents, 110000, 'Next paid month buys another 300 Nekudot');
   reset();
   state.member.cardTier = 'SILVER';
-  await handle(request('subscription_preapproval'));
-  assert.equal(state.revocations.length, 1, 'Subscription activation revokes Silver');
+  assert.equal((await handle(request('subscription_preapproval'))).awaitingPayment, true);
+  assert.equal(state.revocations.length, 0, 'Authorization without a collected payment preserves Silver');
   assert.equal(state.ledger.length, 0, 'Authorization alone is not a collected payment');
   reset();
   state.member.cardTier = 'VOUCHER';
