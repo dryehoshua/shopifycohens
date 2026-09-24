@@ -1042,7 +1042,7 @@ function validateMercadoPagoSignature(request: Request, dataId: string) {
 export async function processMercadoPagoWebhook(request: Request) {
   const body = await request.json().catch(() => ({})) as { type?: string; data?: { id?: string | number } };
   const eventType = String(body.type || "payment");
-  if (eventType !== "payment" && eventType !== "subscription_preapproval") return { ignored: true };
+  if (!["payment", "subscription_preapproval", "subscription_authorized_payment"].includes(eventType)) return { ignored: true };
   const url = new URL(request.url);
   const dataId = String(url.searchParams.get("data.id") || body.data?.id || "").trim();
   if (!dataId) throw new RegistrationError("La notificación no contiene un identificador.", 400);
@@ -1067,7 +1067,7 @@ export async function processMercadoPagoWebhook(request: Request) {
       },
       include: { member: { include: { identities: true } } },
     });
-    if (!record) throw new RegistrationError("La suscripción no corresponde a una membresía Nekudot.", 404);
+    if (!record) return { ignored: true };
     const amountCents = Math.round(Number(subscription.auto_recurring?.transaction_amount) * 100);
     if (amountCents !== record.amountCents || subscription.auto_recurring?.currency_id !== record.currencyCode) {
       throw new RegistrationError("El importe o la moneda de la suscripción no coincide.", 409);
@@ -1105,7 +1105,22 @@ export async function processMercadoPagoWebhook(request: Request) {
     return { approved: active, subscriptionStatus };
   }
 
-  const response = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(dataId)}`, {
+  let paymentDataId = dataId;
+  let subscriptionId: string | null = null;
+  if (eventType === "subscription_authorized_payment") {
+    const invoiceResponse = await fetch(`https://api.mercadopago.com/authorized_payments/${encodeURIComponent(dataId)}`, {
+      headers: { Authorization: `Bearer ${config.accessToken}` },
+    });
+    const invoice = await invoiceResponse.json() as { preapproval_id?: string; payment?: { id?: number | string }; message?: string };
+    if (!invoiceResponse.ok) throw new RegistrationError(invoice.message || "No se pudo verificar la mensualidad.", 502);
+    subscriptionId = String(invoice.preapproval_id || "");
+    if (!subscriptionId) throw new RegistrationError("La mensualidad no identifica una suscripción.", 502);
+    const membership = await db.nekudotMembershipPayment.findUnique({ where: { subscriptionId } });
+    if (!membership) return { ignored: true };
+    if (!invoice.payment?.id) return { approved: false, status: "SCHEDULED" };
+    paymentDataId = String(invoice.payment.id);
+  }
+  const response = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentDataId)}`, {
     headers: { Authorization: `Bearer ${config.accessToken}` },
   });
   const payment = await response.json() as {
@@ -1114,10 +1129,10 @@ export async function processMercadoPagoWebhook(request: Request) {
   };
   if (!response.ok) throw new RegistrationError(payment.message || "No se pudo verificar el pago.", 502);
   const record = await db.nekudotMembershipPayment.findUnique({
-    where: { externalReference: String(payment.external_reference || "") },
+    where: subscriptionId ? { subscriptionId } : { externalReference: String(payment.external_reference || "") },
     include: { member: { include: { identities: true } } },
   });
-  if (!record) throw new RegistrationError("El pago no corresponde a una membresía Nekudot.", 404);
+  if (!record) return { ignored: true };
   const amountCents = Math.round(Number(payment.transaction_amount) * 100);
   if (amountCents !== record.amountCents || payment.currency_id !== record.currencyCode) {
     throw new RegistrationError("El importe o la moneda del pago no coincide.", 409);
@@ -1125,6 +1140,15 @@ export async function processMercadoPagoWebhook(request: Request) {
   if (payment.status !== "approved") {
     await db.nekudotMembershipPayment.update({ where: { id: record.id }, data: { status: String(payment.status || "PENDING").toUpperCase(), rawPayload: payment } });
     return { approved: false };
+  }
+  // A delayed payment notification must not reactivate a paused/cancelled subscription.
+  if (record.subscriptionId) {
+    const currentResponse = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(record.subscriptionId)}`, {
+      headers: { Authorization: `Bearer ${config.accessToken}` },
+    });
+    const current = await currentResponse.json() as { status?: string };
+    if (!currentResponse.ok) throw new RegistrationError("No se pudo verificar el estado actual de la suscripción.", 502);
+    if (current.status !== "authorized") return { approved: false, subscriptionStatus: current.status };
   }
   const identity = record.member.identities[0];
   if (!identity) throw new RegistrationError("La membresía no tiene cliente Shopify vinculado.", 409);
