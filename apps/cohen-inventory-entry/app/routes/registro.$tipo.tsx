@@ -144,11 +144,11 @@ export default function RegistrationPage() {
   }, [matchReview]);
   useEffect(() => {
     if (!result || result.checkoutUrl) return;
-    const timer = window.setTimeout(() => window.top?.location.assign("https://account.cohenskosher.com"), 1800);
+    const timer = window.setTimeout(() => window.top?.location.assign("https://cohenskosher.com/apps/nekudot"), 1800);
     return () => window.clearTimeout(timer);
   }, [result]);
   useEffect(() => {
-    if (data?.ok && data.step === "linked") window.top?.location.assign("https://account.cohenskosher.com");
+    if (data?.ok && data.step === "linked") window.top?.location.assign("https://cohenskosher.com/apps/nekudot");
   }, [data]);
   const liveName = `${firstName} ${lastName}`.trim() || (submitted ? `${submitted.firstName} ${submitted.lastName}` : "");
   const referredIbCode = submitted?.ibCode || String(searchParams.get("ib") || "").slice(0, 40);
@@ -160,14 +160,15 @@ export default function RegistrationPage() {
         ? "Completa tus datos y activa tu suscripción de $300 MXN al mes para recibir el beneficio Golden de 8%."
         : "Crea tu tarjeta comunitaria; el saldo se asignará cuando reciba fondeo de patrocinadores.";
 
-  if (data?.ok && data.step === "linked") return <main className="nk-shell"><section className="nk-panel"><h1>Cuenta confirmada</h1><p>Tu tarjeta y tus puntos se conservan. Continúa en tu cuenta Cohen's.</p><a className="nk-button" href="https://account.cohenskosher.com" target="_top">Abrir mi cuenta Cohen's</a></section></main>;
+  if (data?.ok && data.step === "linked") return <main className="nk-shell"><section className="nk-panel"><h1>Cuenta confirmada</h1><p>Tu tarjeta y tus puntos se conservan. Continúa en tu cuenta Cohen's.</p><a className="nk-button" href="https://cohenskosher.com/apps/nekudot" target="_top">Abrir mi cuenta Cohen's</a></section></main>;
 
   return <main className="nk-shell">
     <header className="nk-brand"><span className="nk-mark">C</span><div><strong>Cohen&apos;s · Nekudot</strong><small>Beneficios que regresan a la comunidad</small></div></header>
     <div className="nk-grid">
       <section className="nk-panel">
         <p className="nk-eyebrow">Registro</p><h1>{option.title}</h1><p className="nk-lead">{description}</p>
-        {result ? <div className="nk-status">{result.status === "PENDING_PAYMENT" ? "Tu cliente fue creado. La membresía Golden quedará activa al autorizar la suscripción mensual." : "Registro completado. Tu tarjeta digital ya está lista; te llevaremos a tu cuenta Cohen's."} {result.ibName ? <>Tu IB es <strong>{result.ibName}</strong>. </> : null}{result.checkoutUrl ? <><a className="nk-button" href={result.checkoutUrl} target="_top">Activar suscripción Golden</a> </> : <a className="nk-button" href="https://account.cohenskosher.com" target="_top">Abrir mi cuenta Cohen&apos;s</a>}</div> : verification ? <div className="nk-existing-verify">
+        {tipo === "golden" ? <div className="nk-status"><p>¿Ya tienes Plata, Blue o Vales? Contrata Golden desde tu misma cuenta. Cuando se active, Plata y Blue quedarán anuladas; tus puntos y vales se conservan.</p><a className="nk-button" href="https://cohenskosher.com/apps/nekudot#golden" target="_top">Ya tengo cuenta · Elegir Golden</a></div> : null}
+        {result ? <div className="nk-status">{result.status === "PENDING_PAYMENT" ? "Tu cliente fue creado. La membresía Golden quedará activa al autorizar la suscripción mensual." : "Registro completado. Tu tarjeta digital ya está lista; te llevaremos a tu cuenta Cohen's."} {result.ibName ? <>Tu IB es <strong>{result.ibName}</strong>. </> : null}{result.checkoutUrl ? <><a className="nk-button" href={result.checkoutUrl} target="_top">Activar suscripción Golden</a> </> : <a className="nk-button" href="https://cohenskosher.com/apps/nekudot" target="_top">Abrir mi cuenta Cohen&apos;s</a>}</div> : verification ? <div className="nk-existing-verify">
           <p className="nk-eyebrow">CONFIRMA TU CUENTA</p><h2>Te enviamos un código</h2><p className="nk-lead">Escríbelo para abrir de forma segura el registro cuyo teléfono termina en {verification.phoneHint}.</p>
           <Form method="post" className="nk-form"><input type="hidden" name="intent" value="verify-existing" /><input type="hidden" name="matchToken" value={verification.matchToken} /><input type="hidden" name="phoneHint" value={verification.phoneHint} /><label className="nk-field full">Código SMS<input name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4,10}" /></label>{data && "error" in data && data.error ? <div className="nk-status error">{String(data.error)}</div> : null}<div className="nk-actions"><button className="nk-button">Confirmar y abrir mis puntos</button></div></Form>
         </div> : <Form method="post" encType="multipart/form-data" className="nk-form">

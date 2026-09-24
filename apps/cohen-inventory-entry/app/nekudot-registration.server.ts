@@ -433,8 +433,8 @@ function credentialHash(rawToken: string) {
   return createHmac("sha256", hmacSecret()).update(`${NEKUDOT_PROGRAM_KEY}:${rawToken}`).digest("hex");
 }
 
-async function ensureBarcodeCredential(memberId: string) {
-  const rawBarcode = publicCardNumber(memberId);
+async function ensureBarcodeCredential(memberId: string, seed = memberId) {
+  const rawBarcode = publicCardNumber(seed);
   const tokenHash = credentialHash(rawBarcode);
   const existing = await db.nekudotCredential.findUnique({
     where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash } },
@@ -625,7 +625,7 @@ async function setCustomerTags(admin: AdminApiContext, customerId: string, tag: 
     mutation NekudotRegistrationRemoveTags($id: ID!, $tags: [String!]!) {
       tagsRemove(id: $id, tags: $tags) { userErrors { message } }
     }
-  `, { id: customerId, tags: TYPE_TAGS.filter((item) => item !== tag) });
+  `, { id: customerId, tags: TYPE_TAGS.filter((item) => item !== tag && !(tag.startsWith("NEKUDOT_GOLDEN") && item === "NEKUDOT_VALES")) });
   const added = await graphql<{ tagsAdd: { userErrors: Array<{ message: string }> } }>(admin, `#graphql
     mutation NekudotRegistrationAddTags($id: ID!, $tags: [String!]!) {
       tagsAdd(id: $id, tags: $tags) { userErrors { message } }
@@ -988,9 +988,28 @@ function goldenPaymentConfiguration() {
   return { accessToken, webhookSecret, appUrl, amountCents: GOLDEN_MONTHLY_PRICE_CENTS };
 }
 
+export async function startGoldenSubscription(memberId: string) {
+  const member = await db.nekudotMember.findUnique({ where: { id: memberId } });
+  if (!member) throw new RegistrationError("No encontramos tu cuenta.", 404);
+  if (member.cardTier === "GOLDEN" && member.active && member.enrollmentStatus === "ACTIVE") {
+    throw new RegistrationError("Tu membresía Golden ya está activa.", 409);
+  }
+  if (!member.email) throw new RegistrationError("Agrega un correo a tu cuenta antes de contratar Golden.", 409);
+  return createGoldenPayment(member.id, member.displayName, member.email);
+}
+
 async function createGoldenPayment(memberId: string, displayName: string, email: string) {
   const config = goldenPaymentConfiguration();
-  const externalReference = `nekudot-golden:${memberId}:${randomBytes(12).toString("hex")}`;
+  const existing = await db.nekudotMembershipPayment.findFirst({ where: { memberId }, orderBy: { createdAt: "desc" } });
+  if (existing?.checkoutUrl && ["PENDING", "SUBSCRIPTION_PENDING"].includes(existing.status)) return existing.checkoutUrl;
+  if (existing) throw new RegistrationError("Ya existe una solicitud Golden. Revisa su estado con la tienda antes de iniciar otra suscripción.", 409);
+  // Reserve one subscription per member before calling the provider, including concurrent clicks.
+  const externalReference = `nekudot-golden:${memberId}`;
+  try {
+    await db.nekudotMembershipPayment.create({ data: { memberId, externalReference, status: "CREATING", amountCents: config.amountCents } });
+  } catch {
+    throw new RegistrationError("Tu solicitud Golden ya está en proceso. Actualiza el panel en unos segundos.", 409);
+  }
   const response = await fetch("https://api.mercadopago.com/preapproval", {
     method: "POST",
     headers: { Authorization: `Bearer ${config.accessToken}`, "Content-Type": "application/json" },
@@ -1004,7 +1023,7 @@ async function createGoldenPayment(memberId: string, displayName: string, email:
         transaction_amount: config.amountCents / 100,
         currency_id: "MXN",
       },
-      back_url: `${config.appUrl}/nekudot?subscription=return`,
+      back_url: "https://cohenskosher.com/apps/nekudot?subscription=return",
       status: "pending",
     }),
   });
@@ -1012,10 +1031,9 @@ async function createGoldenPayment(memberId: string, displayName: string, email:
   if (!response.ok || !payload.id || !payload.init_point) {
     throw new RegistrationError(payload.message || "Mercado Pago no pudo iniciar la suscripción Golden.", 502);
   }
-  await db.nekudotMembershipPayment.create({
+  await db.nekudotMembershipPayment.update({
+    where: { externalReference },
     data: {
-      memberId,
-      externalReference,
       subscriptionId: payload.id,
       status: String(payload.status || "PENDING").toUpperCase(),
       amountCents: config.amountCents,
@@ -1024,6 +1042,19 @@ async function createGoldenPayment(memberId: string, displayName: string, email:
     },
   });
   return payload.init_point;
+}
+
+async function activateGoldenMember(memberId: string) {
+  await db.$transaction(async (transaction) => {
+    const member = await transaction.nekudotMember.findUniqueOrThrow({ where: { id: memberId } });
+    if (["SILVER", "BLUE"].includes(member.cardTier)) {
+      await transaction.nekudotCredential.updateMany({
+        where: { memberId, active: true },
+        data: { active: false, revokedAt: new Date(), revokedReason: "REPLACED_BY_GOLDEN" },
+      });
+    }
+    await transaction.nekudotMember.update({ where: { id: memberId }, data: { cardTier: "GOLDEN", enrollmentStatus: "ACTIVE", active: true, brokerId: null } });
+  });
 }
 
 function validateMercadoPagoSignature(request: Request, dataId: string) {
@@ -1093,15 +1124,16 @@ export async function processMercadoPagoWebhook(request: Request) {
         where: { id: record.id },
         data: { subscriptionId: String(subscription.id || dataId), status: `SUBSCRIPTION_${subscriptionStatus.toUpperCase()}`, rawPayload: subscription },
       }),
-      db.nekudotMember.update({
+      ...(active || record.member.cardTier !== "GOLDEN" ? [] : [db.nekudotMember.update({
         where: { id: record.memberId },
         data: {
           cardTier: "GOLDEN",
-          enrollmentStatus: active ? "ACTIVE" : subscriptionStatus === "paused" ? "SUBSCRIPTION_PAUSED" : "SUBSCRIPTION_CANCELED",
+          enrollmentStatus: subscriptionStatus === "paused" ? "SUBSCRIPTION_PAUSED" : "SUBSCRIPTION_CANCELED",
           active,
         },
-      }),
+      })]),
     ]);
+    if (active) await activateGoldenMember(record.memberId);
     return { approved: active, subscriptionStatus };
   }
 
@@ -1159,8 +1191,8 @@ export async function processMercadoPagoWebhook(request: Request) {
       where: { id: record.id },
       data: { status: "APPROVED", paymentId: String(payment.id), rawPayload: payment, paidAt: payment.date_approved ? new Date(payment.date_approved) : new Date() },
     }),
-    db.nekudotMember.update({ where: { id: record.memberId }, data: { cardTier: "GOLDEN", enrollmentStatus: "ACTIVE", active: true } }),
   ]);
+  await activateGoldenMember(record.memberId);
   return { approved: true };
 }
 
@@ -1444,22 +1476,23 @@ export async function memberCardData(memberId: string) {
     include: { identities: true, broker: true, ownedBroker: true, credentials: { where: { active: true }, orderBy: { createdAt: "asc" } } },
   });
   if (!member) throw new RegistrationError("No encontramos la cuenta.", 404);
-  const rawQr = qrCredential(member.id);
+  const cardSeed = member.cardTier === "GOLDEN" ? `${member.id}:golden` : member.id;
+  const rawQr = qrCredential(cardSeed);
   await db.nekudotCredential.upsert({
     where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: credentialHash(rawQr) } },
     create: { programKey: NEKUDOT_PROGRAM_KEY, memberId: member.id, tokenHash: credentialHash(rawQr), lastFour: rawQr.slice(-4), kind: "QR", label: "QR digital" },
     update: { memberId: member.id, active: true, revokedAt: null, revokedReason: null },
   });
-  await ensureBarcodeCredential(member.id);
+  await ensureBarcodeCredential(member.id, cardSeed);
   const credentials = await db.nekudotCredential.findMany({ where: { memberId: member.id, active: true }, orderBy: { createdAt: "asc" } });
   return {
     ...member,
     credentials,
     availableCents: member.balanceCents - member.reservedCents,
     qrDataUrl: await QRCode.toDataURL(rawQr, { width: 360, margin: 2, errorCorrectionLevel: "M" }),
-    barcodeDataUrl: await barcodeDataUrl(member.id),
+    barcodeDataUrl: await barcodeDataUrl(cardSeed),
     credentialLastFour: rawQr.slice(-4),
-    cardNumber: publicCardNumber(member.id),
+    cardNumber: publicCardNumber(cardSeed),
   };
 }
 

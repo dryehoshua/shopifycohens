@@ -64,6 +64,7 @@ function AccountPage() {
             </s-stack>
           </s-box>
           {!isVoucher ? <s-button href={portalUrl} variant="primary">Usar Nekudot en una compra</s-button> : null}
+          {member.cardTier !== "GOLDEN" ? <s-button href="https://cohenskosher.com/apps/nekudot#golden" variant="secondary">Elegir Golden · $300 MXN al mes</s-button> : null}
           <PhotoEditor member={member} onReload={state.reload} />
         </s-stack>
       </s-section> : null}

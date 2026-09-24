@@ -226,6 +226,11 @@ export async function bindNekudotCredential(input: {
       throw new NekudotError("La tarjeta y el cliente pertenecen a miembros distintos.", 409, "MEMBER_CONFLICT");
     }
     let memberId = credential?.memberId ?? identity?.memberId;
+    const currentMember = memberId ? await transaction.nekudotMember.findUnique({ where: { id: memberId } }) : null;
+    if (credential?.revokedReason === "REPLACED_BY_GOLDEN") throw new NekudotError("Esta tarjeta Plata o Blue fue anulada al activar Golden.", 409);
+    if (currentMember?.cardTier === "GOLDEN" && ["SILVER", "BLUE"].includes(cardTier)) throw new NekudotError("Golden es la tarjeta vigente. No se puede asignar Plata o Blue a esta cuenta.", 409);
+    if (cardTier === "GOLDEN" && !(currentMember?.cardTier === "GOLDEN" && currentMember.active && currentMember.enrollmentStatus === "ACTIVE")) throw new NekudotError("Primero contrata Golden en cohenskosher.com/apps/nekudot. Se activa al confirmar Mercado Pago.", 409);
+    const effectiveTier = currentMember?.cardTier === "GOLDEN" && cardTier === "VOUCHER" ? "GOLDEN" : cardTier;
     if (!memberId) {
       const member = await transaction.nekudotMember.create({
         data: {
@@ -250,7 +255,7 @@ export async function bindNekudotCredential(input: {
         displayName: customer.displayName || "Cliente sin nombre",
         email: customer.defaultEmailAddress?.emailAddress ?? null,
         active: true,
-        cardTier,
+        cardTier: effectiveTier,
         brokerId,
       },
     });
@@ -341,6 +346,8 @@ export async function replaceNekudotCredential(input: {
         "MEMBER_NOT_FOUND",
       );
     }
+    if (identity.member.cardTier === "GOLDEN" && cardTier !== "GOLDEN") throw new NekudotError("La reposición debe conservar tu membresía Golden. Los vales se administran por separado.", 409);
+    if (cardTier === "GOLDEN" && !(identity.member.cardTier === "GOLDEN" && identity.member.enrollmentStatus === "ACTIVE")) throw new NekudotError("Primero confirma la suscripción Golden con Mercado Pago.", 409);
     const incoming = await transaction.nekudotCredential.findUnique({
       where: { programKey_tokenHash: { programKey: NEKUDOT_PROGRAM_KEY, tokenHash: digest } },
     });

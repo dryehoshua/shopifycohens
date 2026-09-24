@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
-import { memberCardData, memberOrders } from "../nekudot-registration.server";
+import { memberCardData, memberOrders, RegistrationError, startGoldenSubscription } from "../nekudot-registration.server";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
 import { createOnlineNekudotRedemption } from "../nekudot-online-redemption.server";
 import { signedMemberPhotoUrl } from "../nekudot-photo-url.server";
@@ -9,7 +9,7 @@ import { authenticate } from "../shopify.server";
 import { NEKUDOT_STOREFRONT_LAYOUT } from "../nekudot-storefront-layout";
 
 type ProxyContext = Awaited<ReturnType<typeof authenticate.public.appProxy>>;
-type PortalMessage = { tone: "success" | "error"; text: string; applyUrl?: string };
+type PortalMessage = { tone: "success" | "error"; text: string; applyUrl?: string; checkoutUrl?: string };
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -53,6 +53,7 @@ function loginHtml() {
       <p>Tu cuenta de la tienda reúne saldo, compras, movimientos y recompra. No necesitas otro acceso.</p>
       <a class="nk-button" href="/customer_authentication/redirect?return_url=%2Fapps%2Fnekudot">Iniciar sesión en Cohen's</a>
       <small>Después de entrar regresarás directamente a Mis Nekudot.</small>
+      <p>También puedes elegir tu tarjeta: <a href="/apps/nekudot/registro/plata">Plata</a> · <a href="/apps/nekudot/registro/blue">Blue</a> · <a href="/apps/nekudot/registro/golden">Golden · $300 MXN al mes</a>.</p>
     </section>
   `);
 }
@@ -66,6 +67,7 @@ function registrationHtml() {
       <div class="nk-actions">
         <a class="nk-button" href="/apps/nekudot/registro/plata">Crear tarjeta Plata</a>
         <a class="nk-button nk-secondary" href="/apps/nekudot/registro/blue">Activar Blue</a>
+        <a class="nk-button" href="/apps/nekudot/registro/golden">Contratar Golden · $300 al mes</a>
       </div>
     </section>
   `);
@@ -111,6 +113,12 @@ function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders:
 
     ${message ? `<div class="nk-message ${message.tone}">${escapeHtml(message.text)}${message.applyUrl ? `<div class="nk-apply"><a class="nk-button" href="${escapeHtml(message.applyUrl)}">Aplicar descuento en mi carrito</a><small>El canje queda reservado durante 30 minutos.</small></div>` : ""}</div>` : ""}
 
+    <section class="nk-panel" id="golden">
+      <h2>Nekudot Golden · $300 MXN al mes</h2>
+      <p>8% de cashback. Puedes conservar tu tarjeta actual o elegir Golden. Al confirmarse Golden, se anulan tus tarjetas Plata y Blue anteriores; conservas tus puntos, historial y vales comunitarios.</p>
+      ${card.cardTier === "GOLDEN" && card.active ? `<strong>Tu membresía Golden está activa.</strong>` : `<form method="post" action="/apps/nekudot#golden"><input type="hidden" name="intent" value="subscribe_golden"><button class="nk-button" type="submit">Contratar Golden con Mercado Pago</button></form>`}
+      ${message?.checkoutUrl ? `<p>Tu solicitud está lista. Revisa y autoriza la suscripción mensual en Mercado Pago.</p><a class="nk-button" href="${escapeHtml(message.checkoutUrl)}">Continuar a Mercado Pago</a>` : ""}
+    </section>
     <div class="nk-grid">
       <section class="nk-panel nk-redeem">
         <span class="nk-kicker" style="color:#80601f">PAGAR CON NEKUDOT</span>
@@ -246,6 +254,10 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   try {
     const intent = String(form.get("intent") || "");
+    if (intent === "subscribe_golden") {
+      const checkoutUrl = await startGoldenSubscription(data.identity.memberId);
+      return proxy.liquid(await dashboardHtml(data.card, data.orders, { tone: "success", text: "Tu tarjeta actual sigue vigente hasta que se confirme Golden.", checkoutUrl }));
+    }
     if (intent === "activate_community_voucher") {
       await activateCommunityVoucher(data.identity.memberId);
       const refreshed = await dashboard(proxy, shop, customerId);
@@ -283,7 +295,7 @@ export async function action({ request }: ActionFunctionArgs) {
       applyUrl: redemption.discountApplyUrl,
     }));
   } catch (error) {
-    const caught = error instanceof NekudotError ? error : new NekudotError("No pudimos preparar el canje.", 500);
+    const caught = error instanceof NekudotError || error instanceof RegistrationError ? error : new NekudotError("No pudimos completar la solicitud.", 500);
     if (wantsJson) return Response.json({ message: caught.message }, { status: caught.status });
     const refreshed = await dashboard(proxy, shop, customerId);
     return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "error", text: caught.message }), { status: caught.status });
