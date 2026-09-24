@@ -16,8 +16,13 @@ globalThis.__goldDb = {
   nekudotMember: {
     findUnique: async () => state.member,
     findUniqueOrThrow: async () => state.member,
-    update: async (args) => { state.members.push(args.data); Object.assign(state.member, args.data); return args.data; },
+    update: async (args) => { state.members.push(args.data); for (const [key, value] of Object.entries(args.data)) state.member[key] = value && typeof value === 'object' && 'increment' in value ? state.member[key] + value.increment : value; return state.member; },
   },
+  nekudotLedgerEntry: {
+    findUnique: async ({ where }) => state.ledger.find((item) => item.idempotencyKey === where.programKey_idempotencyKey.idempotencyKey),
+    create: async ({ data }) => { state.ledger.push(data); return data; },
+  },
+  nekudotPortalSession: { findUnique: async () => state.session, update: async () => ({}) },
   nekudotCredential: { updateMany: async (args) => { state.revocations.push(args); return { count: 2 }; } },
   $transaction: async (operations) => typeof operations === 'function' ? operations(globalThis.__goldDb) : Promise.all(operations),
 };
@@ -42,7 +47,7 @@ function reset(overrides = {}) {
     payment: { id: 123, status: 'approved', external_reference: 'gold-ref', transaction_amount: 300, currency_id: 'MXN' },
     subscription: { id: 'sub', status: 'authorized', auto_recurring: { transaction_amount: 300, currency_id: 'MXN' } },
     member: { id: 'member', cardTier: 'BLUE', active: true, enrollmentStatus: 'ACTIVE', balanceCents: 50000, email: 'test@example.test' },
-    payments: [], members: [], requests: [], revocations: [], ...overrides,
+    payments: [], members: [], requests: [], revocations: [], ledger: [], ...overrides,
   };
 }
 globalThis.fetch = async (url, options) => {
@@ -60,7 +65,16 @@ function request(type = 'subscription_authorized_payment', valid = true) {
   return new Request('https://example.test/webhooks/mercadopago?data.id=123', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-request-id': 'test-request', 'x-signature': `ts=${ts},v1=${valid ? signature : '0'.repeat(64)}` }, body: JSON.stringify({ type, data: { id: 123 } }) });
 }
 try {
-  const { processMercadoPagoWebhook: handle, startGoldenSubscription } = await vite.ssrLoadModule('/app/nekudot-registration.server.ts');
+  const { processMercadoPagoWebhook: handle, startGoldenSubscription, portalMemberFromToken } = await vite.ssrLoadModule('/app/nekudot-registration.server.ts');
+  reset();
+  assert.equal(await portalMemberFromToken('invalid'), null);
+  state.session = { member: state.member, expiresAt: new Date(Date.now() + 60000), lastSeenAt: new Date(), revokedAt: null };
+  assert.equal((await portalMemberFromToken('a'.repeat(43))).id, 'member');
+  state.session.revokedAt = new Date();
+  assert.equal(await portalMemberFromToken('a'.repeat(43)), null);
+  state.session.revokedAt = null;
+  state.session.expiresAt = new Date(0);
+  assert.equal(await portalMemberFromToken('a'.repeat(43)), null);
   reset({ record: null });
   const checkout = await startGoldenSubscription('member');
   assert.equal(state.createdSubscription.back_url, 'https://cohenskosher.com/apps/nekudot?subscription=return');
@@ -73,18 +87,27 @@ try {
   await assert.rejects(startGoldenSubscription('member'), (error) => error.status === 409);
   reset();
   assert.deepEqual(await handle(request()), { approved: true });
-  assert.equal(state.members[0].active, true);
+  assert.equal(state.member.active, true);
   assert.equal(state.payments[0].paymentId, '123');
   assert.equal(state.requests.length, 3);
   assert.equal(state.revocations[0].data.revokedReason, 'REPLACED_BY_GOLDEN');
-  assert.equal(state.member.balanceCents, 50000);
+  assert.equal(state.member.balanceCents, 80000);
+  assert.equal(state.ledger.length, 1);
+  assert.equal(state.ledger[0].type, 'GOLDEN_RECHARGE');
   assert.equal(state.member.brokerId, null);
   await handle(request());
   assert.equal(state.revocations.length, 1, 'Renewal must preserve the Golden card');
+  await handle(request('payment'));
+  assert.equal(state.member.balanceCents, 80000, 'Payment and invoice webhooks credit only once');
+  state.payment.id = 124;
+  state.invoice.payment.id = 124;
+  await handle(request());
+  assert.equal(state.member.balanceCents, 110000, 'Next paid month buys another 300 Nekudot');
   reset();
   state.member.cardTier = 'SILVER';
   await handle(request('subscription_preapproval'));
   assert.equal(state.revocations.length, 1, 'Subscription activation revokes Silver');
+  assert.equal(state.ledger.length, 0, 'Authorization alone is not a collected payment');
   reset();
   state.member.cardTier = 'VOUCHER';
   await handle(request());
@@ -103,7 +126,8 @@ try {
   reset();
   state.subscription.status = 'cancelled';
   assert.equal((await handle(request('payment'))).approved, false);
-  assert.equal(state.members.length, 0);
+  assert.equal(state.revocations.length, 0);
+  assert.equal(state.member.balanceCents, 80000, 'Collected payment is credited even after cancellation');
   reset({ record: null });
   assert.deepEqual(await handle(request('payment')), { ignored: true });
   assert.deepEqual(await handle(request()), { ignored: true });

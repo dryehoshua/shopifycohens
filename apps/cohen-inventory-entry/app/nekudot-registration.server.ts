@@ -1057,6 +1057,28 @@ async function activateGoldenMember(memberId: string) {
   });
 }
 
+async function creditGoldenRecharge(memberId: string, paymentId: string, amountCents: number) {
+  if (!paymentId || paymentId === "undefined") throw new RegistrationError("El pago no contiene un identificador válido.", 502);
+  const idempotencyKey = `golden-recharge:${paymentId}`;
+  await db.$transaction(async (transaction) => {
+    const existing = await transaction.nekudotLedgerEntry.findUnique({
+      where: { programKey_idempotencyKey: { programKey: NEKUDOT_PROGRAM_KEY, idempotencyKey } },
+    });
+    if (existing) {
+      if (existing.memberId !== memberId || existing.amountCents !== amountCents) throw new RegistrationError("El pago ya está vinculado a otra recarga.", 409);
+      return;
+    }
+    const member = await transaction.nekudotMember.update({
+      where: { id: memberId }, data: { balanceCents: { increment: amountCents } },
+    });
+    await transaction.nekudotLedgerEntry.create({ data: {
+      programKey: NEKUDOT_PROGRAM_KEY, memberId, walletType: "CLIENT", type: "GOLDEN_RECHARGE",
+      amountCents, balanceAfterCents: member.balanceCents, source: "MERCADOPAGO", sourceId: paymentId,
+      idempotencyKey, description: "Recarga mensual Gold: 300 Nekudot para comprar en Cohen's",
+    } });
+  });
+}
+
 function validateMercadoPagoSignature(request: Request, dataId: string) {
   const { webhookSecret } = goldenPaymentConfiguration();
   const signature = request.headers.get("x-signature") || "";
@@ -1174,6 +1196,8 @@ export async function processMercadoPagoWebhook(request: Request) {
     return { approved: false };
   }
   // A delayed payment notification must not reactivate a paused/cancelled subscription.
+  // A collected payment still buys its recharge even if cancellation arrived first.
+  await creditGoldenRecharge(record.memberId, String(payment.id), amountCents);
   if (record.subscriptionId) {
     const currentResponse = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(record.subscriptionId)}`, {
       headers: { Authorization: `Bearer ${config.accessToken}` },
@@ -1303,7 +1327,7 @@ async function createMemberPortalSession(member: { id: string }) {
   await db.nekudotPortalSession.create({
     data: { tokenHash: createHash("sha256").update(token).digest("hex"), memberId: member.id, expiresAt: new Date(Date.now() + SESSION_SECONDS * 1000) },
   });
-  return { member, cookie: `${PORTAL_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${process.env.NODE_ENV === "production" ? "; Secure" : ""}` };
+  return { member, token, cookie: `${PORTAL_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${process.env.NODE_ENV === "production" ? "; Secure" : ""}` };
 }
 
 export async function sendPortalOtp(phoneValue: unknown, countryCodeValue?: unknown, customCountryCodeValue?: unknown) {
@@ -1319,7 +1343,9 @@ export async function sendPortalOtp(phoneValue: unknown, countryCodeValue?: unkn
 export async function verifyPortalOtp(phoneValue: unknown, codeValue: unknown) {
   const phone = normalizeInternationalPhone(phoneValue);
   await verifyPhoneOtp(phone, codeValue);
-  let member = await db.nekudotMember.findFirst({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone } });
+  const matches = await db.nekudotMember.findMany({ where: { programKey: NEKUDOT_PROGRAM_KEY, phone }, take: 2 });
+  if (matches.length > 1) throw new RegistrationError("Hay más de una cuenta con ese teléfono. Entra por correo o pide ayuda en tienda.", 409);
+  let member: (typeof matches)[number] | null = matches.length ? matches[0] : null;
   if (!member) member = await createSilverMemberForExistingCustomer(phone);
   if (!member) throw new RegistrationError("No encontramos una cuenta Nekudot con ese teléfono.", 404);
   await claimPendingNekudotOrders({ memberId: member.id, phone, email: member.email });
@@ -1392,6 +1418,11 @@ function requestCookies(request: Request) {
 
 export async function portalMember(request: Request) {
   const token = requestCookies(request)[PORTAL_COOKIE];
+  return portalMemberFromToken(token);
+}
+
+export async function portalMemberFromToken(token: unknown) {
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   if (!token) return null;
   const session = await db.nekudotPortalSession.findUnique({
     where: { tokenHash: createHash("sha256").update(token).digest("hex") },

@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
-import { memberCardData, memberOrders, RegistrationError, startGoldenSubscription } from "../nekudot-registration.server";
+import { memberCardData, memberOrders, RegistrationError, startGoldenSubscription, sendPortalOtp, verifyPortalOtp, portalMemberFromToken } from "../nekudot-registration.server";
+import { phoneSessionScript } from "../nekudot-phone-login";
+import { createHash } from "node:crypto";
 import { claimPendingNekudotOrders, NekudotError } from "../nekudot.server";
 import { createOnlineNekudotRedemption } from "../nekudot-online-redemption.server";
 import { signedMemberPhotoUrl } from "../nekudot-photo-url.server";
@@ -45,13 +47,21 @@ function statusLabel(value: string) {
   return labels[value] || value.replaceAll("_", " ").toLowerCase();
 }
 
-function loginHtml() {
+function loginHtml(phone = "", error = "") {
   return portalShell(`
     <section class="nk-hero nk-login">
       <span class="nk-kicker">NEKUDOT COHEN'S</span>
       <h1>Entra para ver y usar tus Nekudot</h1>
       <p>Tu cuenta de la tienda reúne saldo, compras, movimientos y recompra. No necesitas otro acceso.</p>
-      <a class="nk-button" href="/customer_authentication/redirect?return_url=%2Fapps%2Fnekudot">Iniciar sesión en Cohen's</a>
+      ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ""}
+      <a class="nk-button" href="/customer_authentication/redirect?return_url=%2Fapps%2Fnekudot">Entrar con correo electrónico</a>
+      <h2 style="color:white">O entra con tu teléfono</h2>
+      <form method="post" action="/apps/nekudot" class="nk-form">
+        <input type="hidden" name="intent" value="${phone ? "phone_verify" : "phone_send"}">
+        ${phone ? `<input type="hidden" name="phone" value="${escapeHtml(phone)}"><div class="nk-field"><label for="phone-code">Código SMS enviado a •••• ${escapeHtml(phone.slice(-4))}</label><input id="phone-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,10}" required></div>` : `<div class="nk-field"><label for="phone-number">Teléfono registrado</label><input id="phone-number" name="phone" type="tel" autocomplete="tel" placeholder="55 1234 5678" required><input type="hidden" name="countryCode" value="+52"><small>México: 10 dígitos. Otros países: incluye + y tu lada.</small></div>`}
+        <button class="nk-button" type="submit">${phone ? "Verificar y entrar" : "Enviar código SMS"}</button>
+      </form>
+      <small>El teléfono abre tu misma cuenta Nekudot. Para entrar al checkout o a la cuenta de Shopify se puede solicitar el acceso por correo.</small>
       <small>Después de entrar regresarás directamente a Mis Nekudot.</small>
       <p>También puedes elegir tu tarjeta: <a href="/apps/nekudot/registro/plata">Plata</a> · <a href="/apps/nekudot/registro/blue">Blue</a> · <a href="/apps/nekudot/registro/golden">Golden · $300 MXN al mes</a>.</p>
     </section>
@@ -114,8 +124,14 @@ function dashboardHtml(card: Awaited<ReturnType<typeof memberCardData>>, orders:
     ${message ? `<div class="nk-message ${message.tone}">${escapeHtml(message.text)}${message.applyUrl ? `<div class="nk-apply"><a class="nk-button" href="${escapeHtml(message.applyUrl)}">Aplicar descuento en mi carrito</a><small>El canje queda reservado durante 30 minutos.</small></div>` : ""}</div>` : ""}
 
     <section class="nk-panel" id="golden">
-      <h2>Nekudot Golden · $300 MXN al mes</h2>
-      <p>8% de cashback. Puedes conservar tu tarjeta actual o elegir Golden. Al confirmarse Golden, se anulan tus tarjetas Plata y Blue anteriores; conservas tus puntos, historial y vales comunitarios.</p>
+      <h2>Subir a Gold</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center">
+        ${card.cardTier === "BLUE" ? `<figure style="margin:0;flex:1;min-width:220px"><img src="/apps/nekudot/cards/blue" alt="Tu tarjeta Blue" style="width:100%;max-width:340px;border-radius:16px"><figcaption>Tu Blue · 5% de cashback</figcaption></figure>` : ""}
+        <figure style="margin:0;flex:1;min-width:220px"><img src="/apps/nekudot/cards/golden" alt="Tarjeta Gold: recarga mensual y 8% de cashback" style="width:100%;max-width:340px;border-radius:16px"><figcaption>Gold · 8% de cashback</figcaption></figure>
+      </div>
+      <p><strong>Tus $300 MXN mensuales se convierten en 300 Nekudot para gastar en Cohen's.</strong> Es una recarga mensual automática: 1 Nekudot equivale a $1 MXN para comprar en la tienda.</p>
+      <p><strong>Tus Nekudot no caducan mientras tu tarjeta Gold esté activa.</strong></p>
+      <p>Puedes conservar tu tarjeta actual o elegir Gold. Al confirmarse Gold, se anulan Plata y Blue anteriores; conservas puntos, historial y vales comunitarios.</p>
       ${card.cardTier === "GOLDEN" && card.active ? `<strong>Tu membresía Golden está activa.</strong>` : `<form method="post" action="/apps/nekudot#golden"><input type="hidden" name="intent" value="subscribe_golden"><button class="nk-button" type="submit">Contratar Golden con Mercado Pago</button></form>`}
       ${message?.checkoutUrl ? `<p>Tu solicitud está lista. Revisa y autoriza la suscripción mensual en Mercado Pago.</p><a class="nk-button" href="${escapeHtml(message.checkoutUrl)}">Continuar a Mercado Pago</a>` : ""}
     </section>
@@ -218,9 +234,10 @@ async function dashboard(proxy: ProxyContext, shop: string, customerId: string) 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { proxy, shop, customerId } = await proxyIdentity(request);
   const wantsJson = new URL(request.url).searchParams.get("format") === "json";
+  if (new URL(request.url).searchParams.get("login") === "1") return proxy.liquid(loginHtml(), { headers: { "Cache-Control": "no-store" } });
   if (!customerId) {
     if (wantsJson) return Response.json({ authenticated: false, registered: false }, { status: 401 });
-    return proxy.liquid(loginHtml());
+    return proxy.liquid(loginHtml() + phoneSessionScript(undefined, true), { headers: { "Cache-Control": "no-store" } });
   }
   const data = await dashboard(proxy, shop, customerId);
   if (!data) {
@@ -236,13 +253,42 @@ export async function loader({ request }: LoaderFunctionArgs) {
       availableCents: data.card.availableCents,
     },
   }, { headers: { "Cache-Control": "no-store" } });
-  return proxy.liquid(await dashboardHtml(data.card, data.orders));
+  return proxy.liquid(await dashboardHtml(data.card, data.orders), { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { proxy, shop, customerId } = await proxyIdentity(request);
+  const context = await proxyIdentity(request);
+  const { proxy, shop } = context;
+  let customerId = context.customerId;
   const form = await request.formData();
   const wantsJson = String(form.get("format") || "") === "json";
+  const intent = String(form.get("intent") || "");
+  let phoneSession = String(form.get("phoneSession") || "");
+  const render = (html: string, options: { status?: number } = {}) => proxy.liquid(html + (phoneSession && intent !== "phone_send" ? `<form method="post" action="/apps/nekudot"><input type="hidden" name="intent" value="phone_logout"><button class="nk-button">Cerrar sesión del teléfono</button></form>` : "") + phoneSessionScript(phoneSession), { ...options, headers: { "Cache-Control": "no-store" } });
+  try {
+    if (intent === "phone_send") {
+      const challenge = await sendPortalOtp(form.get("phone"), form.get("countryCode"));
+      return render(loginHtml(challenge.phone));
+    }
+    if (intent === "phone_verify") {
+      const result = await verifyPortalOtp(form.get("phone"), form.get("code"));
+      phoneSession = result.token;
+    }
+    if (phoneSession) {
+      const member = await portalMemberFromToken(phoneSession);
+      const identity = member?.identities.find((item) => item.shop === shop);
+      if (!identity) throw new RegistrationError("Tu sesión expiró o no está vinculada a esta tienda. Vuelve a entrar.", 401);
+      customerId = identity.shopifyCustomerId;
+      if (intent === "phone_logout") {
+        await db.nekudotPortalSession.updateMany({ where: { tokenHash: createHash("sha256").update(phoneSession).digest("hex") }, data: { revokedAt: new Date() } });
+        return proxy.liquid(loginHtml() + phoneSessionScript(undefined, false, true), { headers: { "Cache-Control": "no-store" } });
+      }
+    }
+  } catch (error) {
+    const caught = error instanceof RegistrationError ? error : new RegistrationError("No se pudo completar el acceso. Intenta nuevamente.", 500);
+    const phone = intent === "phone_verify" ? String(form.get("phone") || "") : "";
+    return proxy.liquid(loginHtml(phone, caught.message) + phoneSessionScript(undefined, false, true), { status: caught.status, headers: { "Cache-Control": "no-store" } });
+  }
   if (!customerId) {
     if (wantsJson) return Response.json({ message: "Inicia sesión para usar tus Nekudot." }, { status: 401 });
     return proxy.liquid(loginHtml(), { status: 401 });
@@ -253,25 +299,25 @@ export async function action({ request }: ActionFunctionArgs) {
     return proxy.liquid(registrationHtml(), { status: 404 });
   }
   try {
-    const intent = String(form.get("intent") || "");
+    if (["phone_verify", "phone_resume"].includes(intent)) return render(await dashboardHtml(data.card, data.orders));
     if (intent === "subscribe_golden") {
       const checkoutUrl = await startGoldenSubscription(data.identity.memberId);
-      return proxy.liquid(await dashboardHtml(data.card, data.orders, { tone: "success", text: "Tu tarjeta actual sigue vigente hasta que se confirme Golden.", checkoutUrl }));
+      return render(await dashboardHtml(data.card, data.orders, { tone: "success", text: "Tu tarjeta actual sigue vigente hasta que se confirme Golden.", checkoutUrl }));
     }
     if (intent === "activate_community_voucher") {
       await activateCommunityVoucher(data.identity.memberId);
       const refreshed = await dashboard(proxy, shop, customerId);
-      return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: "Tu tarjeta virtual de vales comunitarios ya está activa." }));
+      return render(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: "Tu tarjeta virtual de vales comunitarios ya está activa." }));
     }
     if (intent === "ib_gold_to_store") {
       const result = await transferIbGoldToNekudot(data.identity.memberId, form.get("amount"));
       const refreshed = await dashboard(proxy, shop, customerId);
-      return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: `${money(result.amountCents)} en Nekudot Gold ya están disponibles para comprar.` }));
+      return render(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: `${money(result.amountCents)} en Nekudot Gold ya están disponibles para comprar.` }));
     }
     if (intent === "ib_gold_withdrawal") {
       const result = await requestIbGoldWithdrawal(data.identity.memberId, form.get("amount"));
       const refreshed = await dashboard(proxy, shop, customerId);
-      return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: `Solicitud de retiro por ${money(result.amountCents)} registrada para revisión.` }));
+      return render(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "success", text: `Solicitud de retiro por ${money(result.amountCents)} registrada para revisión.` }));
     }
     if (intent !== "redeem") throw new NekudotError("Operación no válida.");
     if (!proxy.admin) throw new NekudotError("La conexión de la tienda necesita actualizarse.", 503);
@@ -289,7 +335,7 @@ export async function action({ request }: ActionFunctionArgs) {
       applyUrl: redemption.discountApplyUrl,
     });
     const refreshed = await dashboard(proxy, shop, customerId);
-    return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, {
+    return render(await dashboardHtml(refreshed!.card, refreshed!.orders, {
       tone: "success",
       text: `${money(redemption.amountCents)} listos para usar en tu compra.`,
       applyUrl: redemption.discountApplyUrl,
@@ -298,6 +344,6 @@ export async function action({ request }: ActionFunctionArgs) {
     const caught = error instanceof NekudotError || error instanceof RegistrationError ? error : new NekudotError("No pudimos completar la solicitud.", 500);
     if (wantsJson) return Response.json({ message: caught.message }, { status: caught.status });
     const refreshed = await dashboard(proxy, shop, customerId);
-    return proxy.liquid(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "error", text: caught.message }), { status: caught.status });
+    return render(await dashboardHtml(refreshed!.card, refreshed!.orders, { tone: "error", text: caught.message }), { status: caught.status });
   }
 }

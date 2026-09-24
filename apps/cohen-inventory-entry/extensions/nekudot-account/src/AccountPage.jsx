@@ -64,7 +64,19 @@ function AccountPage() {
             </s-stack>
           </s-box>
           {!isVoucher ? <s-button href={portalUrl} variant="primary">Usar Nekudot en una compra</s-button> : null}
-          {member.cardTier !== "GOLDEN" ? <s-button href="https://cohenskosher.com/apps/nekudot#golden" variant="secondary">Elegir Golden · $300 MXN al mes</s-button> : null}
+          <s-box padding="base" border="base" borderRadius="base">
+            <s-stack direction="block" gap="base">
+              <s-heading>{member.cardTier === "GOLDEN" ? "Tu tarjeta Gold" : "Subir a Gold"}</s-heading>
+              <s-stack direction="inline" gap="base">
+                {member.cardTier === "BLUE" ? <s-image src="https://cohenskosher.com/apps/nekudot/cards/blue" alt="Tu tarjeta Blue" inlineSize="45%" aspectRatio="1.586/1" objectFit="contain" /> : null}
+                <s-image src="https://cohenskosher.com/apps/nekudot/cards/golden" alt="Tarjeta Gold" inlineSize="45%" aspectRatio="1.586/1" objectFit="contain" />
+              </s-stack>
+              <s-text type="strong">$300 MXN al mes = 300 Nekudot para gastar en Cohen's.</s-text>
+              <s-text>Es una recarga mensual automática. 1 Nekudot equivale a $1 MXN en compras. Además recibes 8% de cashback.</s-text>
+              <s-text>Tus Nekudot no caducan mientras Gold esté activa.</s-text>
+              {member.cardTier !== "GOLDEN" ? <s-button href="https://cohenskosher.com/apps/nekudot#golden" variant="primary">Subir a Gold</s-button> : null}
+            </s-stack>
+          </s-box>
           <PhotoEditor member={member} onReload={state.reload} />
         </s-stack>
       </s-section> : null}

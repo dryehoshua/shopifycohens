@@ -32,7 +32,7 @@ const PAGE_OPTIONS = {
   },
   golden: {
     title: "Nekudot Golden",
-    description: "Activa tu membresía Golden y recibe 8% de cashback en tus compras Cohen's.",
+    description: "Recarga $300 MXN al mes y recibe 300 Nekudot para comprar en Cohen's, más 8% de cashback. Tus Nekudot no caducan mientras Gold esté activa.",
     socialTitle: "Cohen's Golden",
     socialImage: "/og-nekudot-golden.png?v=20260902b",
     socialAlt: "Cohen's Golden: beneficios premium con 8% de cashback",
@@ -157,7 +157,7 @@ export default function RegistrationPage() {
     : tipo === "blue"
       ? "Registro exclusivo con el código de tu IB. Tu cuenta quedará vinculada a la persona que presentó Cohen's a tu comunidad."
       : tipo === "golden"
-        ? "Completa tus datos y activa tu suscripción de $300 MXN al mes para recibir el beneficio Golden de 8%."
+        ? "Subir a Gold: tus $300 MXN mensuales se convierten en 300 Nekudot para gastar en Cohen's. 1 Nekudot equivale a $1 MXN en compras. Además recibes 8% de cashback y tus Nekudot no caducan mientras Gold esté activa. La recarga se cobra automáticamente cada mes con Mercado Pago."
         : "Crea tu tarjeta comunitaria; el saldo se asignará cuando reciba fondeo de patrocinadores.";
 
   if (data?.ok && data.step === "linked") return <main className="nk-shell"><section className="nk-panel"><h1>Cuenta confirmada</h1><p>Tu tarjeta y tus puntos se conservan. Continúa en tu cuenta Cohen's.</p><a className="nk-button" href="https://cohenskosher.com/apps/nekudot" target="_top">Abrir mi cuenta Cohen's</a></section></main>;
